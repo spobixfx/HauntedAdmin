@@ -1,0 +1,266 @@
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 16px;
+  
+  /* Haunted Admin Design System - Dark Theme Only */
+  
+  /* Background Colors - Deep Navy to Near Black */
+  --bg-primary: #0A0E1A;        /* Near black - main background */
+  --bg-secondary: #0F1729;      /* Deep navy - elevated surfaces */
+  --bg-tertiary: #1A1F35;       /* Slate - cards and panels */
+  --bg-elevated: #222842;       /* Elevated interactive elements */
+  
+  /* Electric Blue - Primary Accent */
+  --blue-electric: #3B82F6;     /* Main electric blue */
+  --blue-light: #60A5FA;        /* Lighter blue for hover */
+  --blue-dark: #2563EB;         /* Darker blue for active */
+  --blue-darker: #1E40AF;       /* Darkest blue */
+  
+  /* Grey-Blue - Secondary */
+  --grey-blue: #64748B;         /* Muted grey-blue */
+  --grey-blue-light: #94A3B8;   /* Light grey-blue */
+  --grey-blue-dark: #475569;    /* Dark grey-blue */
+  
+  /* Status Colors */
+  --status-success: #10B981;    /* Green */
+  --status-success-light: #34D399;
+  --status-warning: #F59E0B;    /* Orange/Yellow */
+  --status-warning-light: #FBBF24;
+  --status-error: #EF4444;      /* Red */
+  --status-error-light: #F87171;
+  
+  /* Premium Gold - Haunted Tier */
+  --premium-gold: #FCD34D;      /* Bright gold */
+  --premium-gold-dark: #F59E0B; /* Darker gold */
+  
+  /* Subscription Plan Colors */
+  --plan-killore: #8B5CF6;      /* Purple/Blue */
+  --plan-broke-haunted: #06B6D4; /* Cyan/Blue */
+  --plan-haunted: #FCD34D;      /* Gold */
+  
+  /* Text Colors - Base white with opacity applied via classes */
+  --text-base-color: #FFFFFF;
+  --text-primary: rgba(255, 255, 255, 0.95);    /* Page titles */
+  --text-secondary: rgba(255, 255, 255, 0.85);  /* Section titles */
+  --text-body: rgba(255, 255, 255, 0.80);       /* Body text */
+  --text-muted: rgba(255, 255, 255, 0.60);      /* Secondary text & labels */
+  --text-disabled: #475569;                      /* Disabled text */
+  
+  /* Border Colors */
+  --border-default: #1E293B;    /* Subtle borders */
+  --border-strong: #334155;     /* Stronger borders */
+  --border-focus: #3B82F6;      /* Focus state border */
+  
+  /* Apply to semantic tokens */
+  --background: #0A0E1A;
+  --foreground: #F8FAFC;
+  --card: #0F1729;
+  --card-foreground: #F8FAFC;
+  --popover: #1A1F35;
+  --popover-foreground: #F8FAFC;
+  --primary: #3B82F6;
+  --primary-foreground: #F8FAFC;
+  --secondary: #64748B;
+  --secondary-foreground: #F8FAFC;
+  --muted: #1A1F35;
+  --muted-foreground: #94A3B8;
+  --accent: #3B82F6;
+  --accent-foreground: #F8FAFC;
+  --destructive: #EF4444;
+  --destructive-foreground: #F8FAFC;
+  --border: #1E293B;
+  --input: #1A1F35;
+  --input-background: #0F1729;
+  --switch-background: #334155;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #3B82F6;
+  --radius: 0.5rem;
+  
+  /* Sidebar */
+  --sidebar: #0F1729;
+  --sidebar-foreground: #F8FAFC;
+  --sidebar-primary: #3B82F6;
+  --sidebar-primary-foreground: #F8FAFC;
+  --sidebar-accent: #1A1F35;
+  --sidebar-accent-foreground: #F8FAFC;
+  --sidebar-border: #1E293B;
+  --sidebar-ring: #3B82F6;
+  
+  /* Unified Typography Scale */
+  --text-page-title: 22px;       /* Page Titles */
+  --text-section-title: 16px;    /* Section Titles */
+  --text-body: 14px;             /* Body Text (primary) */
+  --text-secondary: 13px;        /* Secondary Text (descriptions) */
+  --text-label: 12px;            /* Labels / Sub-labels */
+  
+  /* Line Heights */
+  --line-height-page-title: 28px;
+  --line-height-section-title: 22px;
+  --line-height-body: 20px;
+  --line-height-secondary: 18px;
+  
+  /* Text Opacities */
+  --text-opacity-primary: 0.95;   /* Page titles - white 95% */
+  --text-opacity-section: 0.85;   /* Section titles - white 85% */
+  --text-opacity-body: 0.80;      /* Body text - white 80% */
+  --text-opacity-muted: 0.60;     /* Secondary text & labels - white 60% */
+  
+  /* Font Weights */
+  --font-weight-semibold: 600;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+}
+
+.dark {
+  /* Dark mode is the default for Haunted Admin */
+  --background: #0A0E1A;
+  --foreground: #F8FAFC;
+  --card: #0F1729;
+  --card-foreground: #F8FAFC;
+  --popover: #1A1F35;
+  --popover-foreground: #F8FAFC;
+  --primary: #3B82F6;
+  --primary-foreground: #F8FAFC;
+  --secondary: #64748B;
+  --secondary-foreground: #F8FAFC;
+  --muted: #1A1F35;
+  --muted-foreground: #94A3B8;
+  --accent: #3B82F6;
+  --accent-foreground: #F8FAFC;
+  --destructive: #EF4444;
+  --destructive-foreground: #F8FAFC;
+  --border: #1E293B;
+  --input: #1A1F35;
+  --ring: #3B82F6;
+  --sidebar: #0F1729;
+  --sidebar-foreground: #F8FAFC;
+  --sidebar-primary: #3B82F6;
+  --sidebar-primary-foreground: #F8FAFC;
+  --sidebar-accent: #1A1F35;
+  --sidebar-accent-foreground: #F8FAFC;
+  --sidebar-border: #1E293B;
+  --sidebar-ring: #3B82F6;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/**
+ * Unified Typography System
+ * Page Titles: Inter 600, 22px/28px, White 95%
+ * Section Titles: Inter 600, 16px/22px, White 85%
+ * Body Text: Inter 400, 14px/20px, White 80%
+ * Secondary Text: Inter 400, 13px/18px, White 60%
+ * Labels: Inter 500, 12px, White 60%
+ */
+@layer base {
+  :where(:not(:has([class*=' text-']), :not(:has([class^='text-'])))) {
+    h1 {
+      font-size: var(--text-page-title);
+      font-weight: var(--font-weight-semibold);
+      line-height: var(--line-height-page-title);
+      color: var(--text-primary);
+    }
+
+    h2 {
+      font-size: var(--text-section-title);
+      font-weight: var(--font-weight-semibold);
+      line-height: var(--line-height-section-title);
+      color: var(--text-secondary);
+    }
+
+    h3 {
+      font-size: var(--text-section-title);
+      font-weight: var(--font-weight-semibold);
+      line-height: var(--line-height-section-title);
+      color: var(--text-secondary);
+    }
+
+    h4 {
+      font-size: var(--text-body);
+      font-weight: var(--font-weight-medium);
+      line-height: var(--line-height-body);
+      color: var(--text-body);
+    }
+
+    p {
+      font-size: var(--text-body);
+      font-weight: var(--font-weight-normal);
+      line-height: var(--line-height-body);
+      color: var(--text-body);
+    }
+
+    label {
+      font-size: var(--text-label);
+      font-weight: var(--font-weight-medium);
+      line-height: var(--line-height-body);
+      color: var(--text-muted);
+    }
+
+    button {
+      font-size: var(--text-body);
+      font-weight: var(--font-weight-medium);
+      line-height: var(--line-height-body);
+    }
+
+    input, textarea {
+      font-size: var(--text-body);
+      font-weight: var(--font-weight-normal);
+      line-height: var(--line-height-body);
+    }
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
