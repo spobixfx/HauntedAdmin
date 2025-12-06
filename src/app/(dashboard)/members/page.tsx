@@ -7,7 +7,6 @@ import { getPlanBadgeClass } from '@/components/PlanBadge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
-import { DateField } from '@/components/ui/DateField';
 import {
   Table,
   TableBody,
@@ -170,12 +169,6 @@ const formatInputDate = (date?: Date | null) => {
   return date.toISOString().slice(0, 10);
 };
 
-const parseInputDate = (value?: string | null) => {
-  if (!value) return null;
-  const d = new Date(`${value}T00:00:00.000Z`);
-  return isNaN(d.getTime()) ? null : d;
-};
-
 const addDays = (dateInput: string, days: number) => {
   if (!dateInput || Number.isNaN(days)) return '';
 
@@ -250,6 +243,7 @@ const formStateFromMember = (member: Member, plan?: Plan): FormState => {
 };
 
 export default function MembersPage() {
+  const todayInput = formatInputDate(new Date());
   const [members, setMembers] = useState<Member[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -495,7 +489,7 @@ export default function MembersPage() {
     setFormErrors((prev) => ({ ...prev, plan: undefined }));
   };
 
-  const handleStartDateChange = (value: string | null) => {
+  const handleStartDateChange = (value: string) => {
     const nextStart = value ?? '';
     const selectedPlan = plans.find((plan) => plan.id === formData.planId);
     if (!selectedPlan) {
@@ -514,7 +508,7 @@ export default function MembersPage() {
     }));
   };
 
-  const handleEndDateChange = (value: string | null) => {
+  const handleEndDateChange = (value: string) => {
     const nextEnd = value ?? '';
     setFormData((prev) => ({
       ...prev,
@@ -1035,25 +1029,27 @@ export default function MembersPage() {
               )}
             </label>
 
-            <DateField
-              label="Start Date"
-              value={formData.startDate}
-              onChange={handleStartDateChange}
-              maxDate={new Date()}
-              placeholder="DD.MM.YYYY"
-              className="text-sm"
-            />
+            <label className="space-y-2 text-sm">
+              <span className="text-[var(--text-muted)]">Start Date</span>
+              <input
+                type="date"
+                value={formData.startDate}
+                max={todayInput}
+                onChange={(e) => handleStartDateChange(e.target.value)}
+                className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--input-background)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              />
+            </label>
           </div>
 
           <div className="space-y-2 text-sm">
-            <DateField
-              label="End Date"
+            <span className="text-[var(--text-muted)]">End Date</span>
+            <input
+              type="date"
               value={formData.endDate}
-              onChange={handleEndDateChange}
-              minDate={parseInputDate(formData.startDate) ?? undefined}
+              min={formData.startDate || undefined}
+              onChange={(e) => handleEndDateChange(e.target.value)}
               disabled={formData.isLifetime}
-              placeholder={formData.isLifetime ? 'Lifetime' : 'DD.MM.YYYY'}
-              className="text-sm"
+              className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--input-background)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:opacity-40"
             />
             <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
               <input
