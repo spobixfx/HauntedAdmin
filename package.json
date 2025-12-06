@@ -47,6 +47,8 @@
     "prisma": "^7.1.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "date-fns": "^3.6.0",
+    "react-datepicker": "^7.0.0",
     "react-hook-form": "7.55.0",
     "react-resizable-panels": "2.1.7",
     "recharts": "2.15.2",

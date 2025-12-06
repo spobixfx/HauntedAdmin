@@ -7,6 +7,7 @@ import { getPlanBadgeClass } from '@/components/PlanBadge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
+import { DatePicker } from '@/components/ui/DatePicker';
 import {
   Table,
   TableBody,
@@ -169,6 +170,12 @@ const formatInputDate = (date?: Date | null) => {
   return date.toISOString().slice(0, 10);
 };
 
+const parseInputDate = (value?: string | null) => {
+  if (!value) return null;
+  const d = new Date(`${value}T00:00:00.000Z`);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 const addDays = (dateInput: string, days: number) => {
   if (!dateInput || Number.isNaN(days)) return '';
 
@@ -243,7 +250,6 @@ const formStateFromMember = (member: Member, plan?: Plan): FormState => {
 };
 
 export default function MembersPage() {
-  const todayInput = formatInputDate(new Date());
   const [members, setMembers] = useState<Member[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -489,7 +495,8 @@ export default function MembersPage() {
     setFormErrors((prev) => ({ ...prev, plan: undefined }));
   };
 
-  const handleStartDateChange = (value: string) => {
+  const handleStartDateChange = (date: Date | null) => {
+    const value = formatInputDate(date);
     const selectedPlan = plans.find((plan) => plan.id === formData.planId);
     if (!selectedPlan) {
       setFormData((prev) => ({
@@ -504,6 +511,15 @@ export default function MembersPage() {
       startDate: value,
       endDate: derived.endDate || prev.endDate,
       isLifetime: derived.isLifetime,
+    }));
+  };
+
+  const handleEndDateChange = (date: Date | null) => {
+    const value = formatInputDate(date);
+    setFormData((prev) => ({
+      ...prev,
+      endDate: value,
+      isLifetime: false,
     }));
   };
 
@@ -1018,32 +1034,26 @@ export default function MembersPage() {
                 <p className="text-xs text-red-400">{formErrors.plan}</p>
               )}
             </label>
-            <label className="space-y-2 text-sm">
-              <span className="text-[var(--text-muted)]">Start Date</span>
-              <input
-                type="date"
-                value={formData.startDate}
-                max={todayInput}
-                onChange={(e) => handleStartDateChange(e.target.value)}
-                className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--input-background)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-              />
-            </label>
+
+            <DatePicker
+              label="Start Date"
+              value={parseInputDate(formData.startDate)}
+              onChange={handleStartDateChange}
+              maxDate={new Date()}
+              placeholder="Select start date"
+              className="text-sm"
+            />
           </div>
 
           <div className="space-y-2 text-sm">
-            <span className="text-[var(--text-muted)]">End Date</span>
-            <input
-              type="date"
-              value={formData.endDate}
-              onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  endDate: e.target.value,
-                  isLifetime: false,
-                }))
-              }
+            <DatePicker
+              label="End Date"
+              value={parseInputDate(formData.endDate)}
+              onChange={handleEndDateChange}
+              minDate={parseInputDate(formData.startDate) ?? undefined}
               disabled={formData.isLifetime}
-              className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--input-background)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:opacity-40"
+              placeholder={formData.isLifetime ? 'Lifetime' : 'Select end date'}
+              className="text-sm"
             />
             <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
               <input
