@@ -7,7 +7,7 @@ import { getPlanBadgeClass } from '@/components/PlanBadge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
-import { DatePicker } from '@/components/ui/DatePicker';
+import { DateField } from '@/components/ui/DateField';
 import {
   Table,
   TableBody,
@@ -495,30 +495,30 @@ export default function MembersPage() {
     setFormErrors((prev) => ({ ...prev, plan: undefined }));
   };
 
-  const handleStartDateChange = (date: Date | null) => {
-    const value = formatInputDate(date);
+  const handleStartDateChange = (value: string | null) => {
+    const nextStart = value ?? '';
     const selectedPlan = plans.find((plan) => plan.id === formData.planId);
     if (!selectedPlan) {
       setFormData((prev) => ({
         ...prev,
-        startDate: value,
+        startDate: nextStart,
       }));
       return;
     }
-    const derived = deriveEndDate(selectedPlan.durationDays, value);
+    const derived = deriveEndDate(selectedPlan.durationDays, nextStart);
     setFormData((prev) => ({
       ...prev,
-      startDate: value,
+      startDate: nextStart,
       endDate: derived.endDate || prev.endDate,
       isLifetime: derived.isLifetime,
     }));
   };
 
-  const handleEndDateChange = (date: Date | null) => {
-    const value = formatInputDate(date);
+  const handleEndDateChange = (value: string | null) => {
+    const nextEnd = value ?? '';
     setFormData((prev) => ({
       ...prev,
-      endDate: value,
+      endDate: nextEnd,
       isLifetime: false,
     }));
   };
@@ -1035,24 +1035,24 @@ export default function MembersPage() {
               )}
             </label>
 
-            <DatePicker
+            <DateField
               label="Start Date"
-              value={parseInputDate(formData.startDate)}
+              value={formData.startDate}
               onChange={handleStartDateChange}
               maxDate={new Date()}
-              placeholder="Select start date"
+              placeholder="DD.MM.YYYY"
               className="text-sm"
             />
           </div>
 
           <div className="space-y-2 text-sm">
-            <DatePicker
+            <DateField
               label="End Date"
-              value={parseInputDate(formData.endDate)}
+              value={formData.endDate}
               onChange={handleEndDateChange}
               minDate={parseInputDate(formData.startDate) ?? undefined}
               disabled={formData.isLifetime}
-              placeholder={formData.isLifetime ? 'Lifetime' : 'Select end date'}
+              placeholder={formData.isLifetime ? 'Lifetime' : 'DD.MM.YYYY'}
               className="text-sm"
             />
             <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">

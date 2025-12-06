@@ -63,6 +63,29 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 }) => {
   const displayValue = value ? format(value, "dd.MM.yyyy") : "";
   const [currentMonth, setCurrentMonth] = useState<Date>(value ?? new Date());
+  const monthNames = useMemo(
+    () => [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ],
+    []
+  );
+  const years = useMemo(() => {
+    const nowYear = new Date().getFullYear();
+    const start = nowYear - 5;
+    const end = nowYear + 10;
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }, []);
 
   const dayClassName = (date: Date) => {
     const isSelected = value ? isSameDay(date, value) : false;
@@ -94,23 +117,24 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     <div
       className={cx(
         containerClassName,
-        "w-[320px] rounded-2xl border border-slate-800/80 bg-[#050814] p-4",
-        "shadow-[0_18px_45px_rgba(0,0,0,0.65)]"
+        "w-[340px] rounded-3xl border border-slate-800/70",
+        "bg-gradient-to-b from-slate-900/95 to-slate-950 px-4 py-4",
+        "shadow-[0_18px_45px_rgba(0,0,0,0.55)] z-[60]"
       )}
     >
-      {children}
-      <div className="mt-3 flex items-center justify-end gap-3 text-[11px] font-medium text-slate-400">
+      <div className="rounded-2xl bg-slate-900/80 px-2 pt-3 pb-2">{children}</div>
+      <div className="mt-3 flex items-center justify-end gap-2 text-xs font-medium text-slate-400">
         <button
           type="button"
           onClick={() => onChange(new Date())}
-          className="transition hover:text-slate-100"
+          className="rounded-full px-3 py-1 transition hover:bg-slate-800/70 hover:text-slate-100"
         >
           Today
         </button>
         <button
           type="button"
           onClick={() => onChange(null)}
-          className="transition hover:text-slate-100"
+          className="rounded-full px-3 py-1 transition hover:bg-slate-800/70 hover:text-slate-100"
         >
           Clear
         </button>
@@ -159,43 +183,80 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         dayClassName={dayClassName}
         renderCustomHeader={({
           date,
+          changeMonth,
+          changeYear,
           decreaseMonth,
           increaseMonth,
           prevMonthButtonDisabled,
           nextMonthButtonDisabled,
         }) => (
-          <div className="flex items-center justify-between pb-2 text-sm text-slate-200">
-            <button
-              type="button"
-              onClick={decreaseMonth}
-              disabled={prevMonthButtonDisabled}
-              className={cx(
-                "flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/80",
-                "bg-slate-900 text-slate-200 transition hover:bg-slate-800",
-                prevMonthButtonDisabled && "opacity-50"
-              )}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <div className="text-sm font-medium text-slate-100">
-              {format(date, "LLLL yyyy")}
+          <div className="flex items-center justify-between px-1 pb-2 text-sm text-slate-200">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={decreaseMonth}
+                disabled={prevMonthButtonDisabled}
+                className={cx(
+                  "flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/70",
+                  "bg-slate-900 text-slate-200 transition hover:bg-slate-800",
+                  prevMonthButtonDisabled && "opacity-50"
+                )}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={increaseMonth}
+                disabled={nextMonthButtonDisabled}
+                className={cx(
+                  "flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/70",
+                  "bg-slate-900 text-slate-200 transition hover:bg-slate-800",
+                  nextMonthButtonDisabled && "opacity-50"
+                )}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={increaseMonth}
-              disabled={nextMonthButtonDisabled}
-              className={cx(
-                "flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/80",
-                "bg-slate-900 text-slate-200 transition hover:bg-slate-800",
-                nextMonthButtonDisabled && "opacity-50"
-              )}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <select
+                value={date.getMonth()}
+                onChange={(e) => {
+                  const month = Number(e.target.value);
+                  const updated = new Date(date);
+                  updated.setMonth(month);
+                  setCurrentMonth(updated);
+                  changeMonth(month);
+                }}
+                className="rounded-full border border-slate-700/70 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-100 outline-none ring-0 focus:border-slate-500"
+              >
+                {monthNames.map((name, idx) => (
+                  <option key={name} value={idx}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={date.getFullYear()}
+                onChange={(e) => {
+                  const year = Number(e.target.value);
+                  const updated = new Date(date);
+                  updated.setFullYear(year);
+                  setCurrentMonth(updated);
+                  changeYear(year);
+                }}
+                className="rounded-full border border-slate-700/70 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-100 outline-none ring-0 focus:border-slate-500"
+              >
+                {years.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
         weekDayClassName={() =>
-          "text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500"
+          "text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500"
         }
         renderDayContents={(day) => <span>{day}</span>}
         calendarContainer={CalendarContainer}
