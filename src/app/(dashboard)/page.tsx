@@ -177,12 +177,18 @@ export default function DashboardPage() {
     return { total, active, expiringSoon, expired, trialConversions };
   }, [members]);
 
+  const getTimeFromNullable = (value: string | null): number => {
+    if (!value) return 0;
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  };
+
   const recentMembers = useMemo(
     () =>
       [...members]
         .sort(
           (a, b) =>
-            new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+            getTimeFromNullable(b.startDate) - getTimeFromNullable(a.startDate)
         )
         .slice(0, 5),
     [members]

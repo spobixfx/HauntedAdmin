@@ -13,7 +13,7 @@ import { NotFound } from './components/pages/NotFound';
 import { LogoutModal } from './components/modals/LogoutModal';
 import { ChangePasswordModal } from './components/modals/ChangePasswordModal';
 import { ProfileModal } from './components/modals/ProfileModal';
-import { Toaster, toast } from 'sonner@2.0.3';
+import { Toaster, toast } from 'sonner';
 import { AuthTestMenu } from './components/admin/AuthTestMenu';
 
 export default function App() {

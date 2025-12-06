@@ -9,10 +9,11 @@ interface KPICardProps {
     value: string;
     direction: 'up' | 'down';
   };
+  subtitle?: string;
   className?: string;
 }
 
-export function KPICard({ title, value, icon: Icon, trend, className = '' }: KPICardProps) {
+export function KPICard({ title, value, icon: Icon, trend, subtitle, className = '' }: KPICardProps) {
   const TrendIcon = trend?.direction === 'up' ? TrendingUp : TrendingDown;
   const trendColor = trend?.direction === 'up' ? 'text-[var(--status-success)]' : 'text-[var(--status-error)]';
   
@@ -42,6 +43,14 @@ export function KPICard({ title, value, icon: Icon, trend, className = '' }: KPI
       <div style={{ fontSize: 'var(--text-label)', fontWeight: 'var(--font-weight-medium)', color: 'var(--text-muted)' }} className="mb-1">
         {title}
       </div>
+      {subtitle && (
+        <p
+          className="mb-2"
+          style={{ fontSize: 'var(--text-secondary)', lineHeight: 'var(--line-height-secondary)', color: 'var(--text-muted)' }}
+        >
+          {subtitle}
+        </p>
+      )}
       
       <div style={{ fontSize: 'var(--text-page-title)', fontWeight: 'var(--font-weight-semibold)', lineHeight: 'var(--line-height-page-title)', color: 'var(--text-primary)' }}>
         {value}
