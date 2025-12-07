@@ -7,6 +7,7 @@ import { getPlanBadgeClass } from '@/components/PlanBadge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
+import { ExtendMembershipModal } from './components/ExtendMembershipModal';
 import {
   Table,
   TableBody,
@@ -257,6 +258,9 @@ export default function MembersPage() {
   const [plansError, setPlansError] = useState<string | null>(null);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [discordIdError, setDiscordIdError] = useState<string | null>(null);
+  const [isExtendModalOpen, setIsExtendModalOpen] = useState(false);
+  const [extendMember, setExtendMember] = useState<Member | null>(null);
+  const [extendLoading, setExtendLoading] = useState(false);
   const [formErrors, setFormErrors] = useState<{
     discordUsername?: string;
     plan?: string;
@@ -386,6 +390,49 @@ export default function MembersPage() {
     setMemberToDelete(member);
     setIsDeleteModalOpen(true);
     setIsDeleting(false);
+  };
+
+  const handleOpenExtendModal = (member: Member) => {
+    setExtendMember(member);
+    setIsExtendModalOpen(true);
+  };
+
+  const handleCloseExtendModal = () => {
+    setIsExtendModalOpen(false);
+    setExtendMember(null);
+    setExtendLoading(false);
+  };
+
+  const handleConfirmExtend = async (days: number) => {
+    if (!extendMember) return;
+    setExtendLoading(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(`/api/members/${encodeURIComponent(extendMember.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extendDays: days }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body?.member) {
+        const message =
+          body?.error || body?.message || 'Failed to extend membership';
+        setFetchError(message);
+        return;
+      }
+
+      const updated = mapApiMember(body.member);
+      setMembers((prev) =>
+        prev.map((m) => (m.id === updated.id ? updated : m))
+      );
+      handleCloseExtendModal();
+    } catch (error) {
+      console.error('[MEMBERS_EXTEND]', error);
+      setFetchError('Unable to extend membership. Try again.');
+    } finally {
+      setExtendLoading(false);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -829,7 +876,7 @@ export default function MembersPage() {
           </div>
 
           <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020]/70 md:overflow-visible overflow-x-auto">
-            <table className="min-w-full table-fixed text-sm text-slate-200">
+            <table className="min-w-full table-auto text-sm text-slate-200">
               <thead className="bg-white/5">
                 <tr>
                   <th className="w-[15%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
@@ -856,7 +903,10 @@ export default function MembersPage() {
                   <th className="w-[8%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Status
                   </th>
-                  <th className="w-[8%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th
+                    scope="col"
+                    className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-400 w-[260px]"
+                  >
                     Actions
                   </th>
                 </tr>
@@ -933,19 +983,26 @@ export default function MembersPage() {
                           {member.status}
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-2">
+                      <td className="px-4 py-3 text-right whitespace-nowrap align-middle w-[260px]">
+                        <div className="inline-flex items-center justify-end gap-2">
                           <button
                             type="button"
                             onClick={() => handleEditMember(member)}
-                            className="rounded-full border border-slate-600/60 px-3 py-1 text-xs font-medium text-slate-200 hover:bg-slate-700/40 transition"
+                            className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-800 transition"
                           >
                             Edit
                           </button>
                           <button
                             type="button"
+                            onClick={() => handleOpenExtendModal(member)}
+                            className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-800 transition"
+                          >
+                            Extend
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleOpenDeleteModal(member)}
-                            className="rounded-full border border-red-500/70 px-3 py-1 text-xs font-medium text-red-300 hover:bg-red-600/20 transition"
+                            className="rounded-full border border-red-500/70 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-300 hover:bg-red-500/20 transition"
                           >
                             Delete
                           </button>
@@ -1086,6 +1143,21 @@ export default function MembersPage() {
           </div>
         </form>
       </Modal>
+      <ExtendMembershipModal
+        open={isExtendModalOpen}
+        onClose={handleCloseExtendModal}
+        onConfirm={handleConfirmExtend}
+        loading={extendLoading}
+        member={
+          extendMember
+            ? {
+                id: extendMember.id,
+                discordUsername: extendMember.discordUsername,
+                endDate: extendMember.endDate,
+              }
+            : null
+        }
+      />
       {isDeleteModalOpen && memberToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141726] p-6 shadow-2xl">

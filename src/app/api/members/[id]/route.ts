@@ -7,9 +7,80 @@ export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await context.params;
-  const body = await request.json();
-  return NextResponse.json({ id, ...body }, { status: 200 });
+  try {
+    const { id } = await context.params;
+    const body = await request.json();
+    const extendDaysRaw = body?.extendDays;
+    const extendDays =
+      typeof extendDaysRaw === "number"
+        ? extendDaysRaw
+        : typeof extendDaysRaw === "string"
+          ? Number(extendDaysRaw)
+          : null;
+
+    if (!id) {
+      return NextResponse.json({ error: "Missing member id" }, { status: 400 });
+    }
+
+    if (!extendDays || Number.isNaN(extendDays) || extendDays <= 0) {
+      return NextResponse.json(
+        { error: "extendDays must be a positive number" },
+        { status: 400 }
+      );
+    }
+
+    const supabase = createClient();
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("members")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !existing) {
+      return NextResponse.json(
+        { error: "Member not found" },
+        { status: 404 }
+      );
+    }
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const currentEnd =
+      existing.end_date && typeof existing.end_date === "string"
+        ? new Date(existing.end_date)
+        : null;
+
+    const start =
+      currentEnd && currentEnd.getTime() > today.getTime() ? currentEnd : today;
+
+    const newEnd = new Date(start);
+    newEnd.setUTCDate(newEnd.getUTCDate() + extendDays);
+
+    const { data: updated, error: updateError } = await supabase
+      .from("members")
+      .update({ end_date: newEnd.toISOString() })
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (updateError || !updated) {
+      const raw =
+        (updateError as any)?.message ||
+        (updateError as any)?.details ||
+        "Failed to extend membership";
+      return NextResponse.json({ error: raw }, { status: 500 });
+    }
+
+    return NextResponse.json({ member: updated }, { status: 200 });
+  } catch (err: any) {
+    const message =
+      err?.message ||
+      (err as any)?.error ||
+      "Failed to process membership extension";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function DELETE(
@@ -32,7 +103,7 @@ export async function DELETE(
     const supabase = createClient();
 
     const { error, count } = await supabase
-      .from("haunted_members")
+      .from("members")
       .delete({ count: "exact" })
       .eq("id", id);
 
