@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
@@ -12,6 +12,7 @@ type MemberForExtend = {
   id: string;
   discordUsername: string;
   endDate: string | "lifetime";
+  startDate?: string;
   planName?: string;
   basePriceCents?: number;
   discountPercent?: number;
@@ -21,7 +22,11 @@ type ExtendMembershipModalProps = {
   open: boolean;
   member: MemberForExtend | null;
   onClose: () => void;
-  onConfirm: (extendDays: number) => void;
+  onConfirm: (
+    payload:
+      | { mode: "add"; days: number }
+      | { mode: "set"; endDate: string }
+  ) => void;
   loading?: boolean;
 };
 
@@ -43,8 +48,22 @@ export function ExtendMembershipModal({
   onConfirm,
   loading,
 }: ExtendMembershipModalProps) {
+  const [mode, setMode] = useState<"add" | "set">("add");
   const [selected, setSelected] = useState<string>("30");
   const [customDays, setCustomDays] = useState<string>("");
+  const [endDateInput, setEndDateInput] = useState<string>("");
+  const [ackLifetime, setAckLifetime] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!member) return;
+    setMode("add");
+    setSelected("30");
+    setCustomDays("");
+    setLocalError(null);
+    setAckLifetime(false);
+    setEndDateInput(member.endDate === "lifetime" ? "" : member.endDate || "");
+  }, [member]);
 
   const extendDays = useMemo(() => {
     if (selected === "custom") {
@@ -63,18 +82,33 @@ export function ExtendMembershipModal({
 
   const startDate = useMemo(() => {
     if (!member) return today;
+    if (member.startDate) {
+      const parsed = new Date(member.startDate);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
     if (member.endDate === "lifetime") return today;
     const end = new Date(member.endDate);
     if (isNaN(end.getTime())) return today;
     return end.getTime() > today.getTime() ? end : today;
   }, [member, today]);
 
+  const startDateInput = useMemo(() => {
+    if (!member?.startDate) return "";
+    const d = new Date(member.startDate);
+    return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+  }, [member?.startDate]);
+
   const projectedEnd = useMemo(() => {
+    if (mode === "set") {
+      if (!endDateInput) return null;
+      const parsed = new Date(endDateInput);
+      return isNaN(parsed.getTime()) ? null : parsed;
+    }
     if (!extendDays) return null;
     const next = new Date(startDate);
     next.setUTCDate(next.getUTCDate() + extendDays);
     return next;
-  }, [extendDays, startDate]);
+  }, [mode, extendDays, startDate, endDateInput]);
 
   const discountPercent =
     member && typeof member.discountPercent === "number"
@@ -92,8 +126,36 @@ export function ExtendMembershipModal({
       : 0;
 
   const handleConfirm = () => {
-    if (!extendDays) return;
-    onConfirm(extendDays);
+    setLocalError(null);
+
+    if (member?.endDate === "lifetime" && !ackLifetime) {
+      setLocalError("Please confirm disabling lifetime before extending.");
+      return;
+    }
+
+    if (mode === "set") {
+      if (!endDateInput) {
+        setLocalError("Choose an end date.");
+        return;
+      }
+      const parsed = new Date(endDateInput);
+      if (isNaN(parsed.getTime())) {
+        setLocalError("Invalid end date.");
+        return;
+      }
+      if (startDate && parsed.getTime() < startDate.getTime()) {
+        setLocalError("End date cannot be before start date.");
+        return;
+      }
+      onConfirm({ mode: "set", endDate: endDateInput });
+      return;
+    }
+
+    if (!extendDays) {
+      setLocalError("Enter a valid number of days.");
+      return;
+    }
+    onConfirm({ mode: "add", days: extendDays });
   };
 
   return (
@@ -154,32 +216,97 @@ export function ExtendMembershipModal({
           </div>
         </div>
 
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-            Extension
-          </label>
-          <select
-            value={selected}
-            onChange={(e) => setSelected(e.target.value)}
-            className="w-full rounded-xl border border-slate-800/80 bg-[#0b1020] px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-          >
-            <option value="30">+1 month (30 days)</option>
-            <option value="90">+3 months (90 days)</option>
-            <option value="180">+6 months (180 days)</option>
-            <option value="365">+12 months (365 days)</option>
-            <option value="custom">Custom…</option>
-          </select>
-          {selected === "custom" && (
-            <input
-              type="number"
-              min={1}
-              value={customDays}
-              onChange={(e) => setCustomDays(e.target.value)}
-              placeholder="Enter number of days"
-              className="w-full rounded-xl border border-slate-800/80 bg-[#0b1020] px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-            />
+        <div className="space-y-3">
+          <div className="inline-flex rounded-full border border-slate-800/80 bg-[#0b1020] p-1 text-xs text-slate-100">
+            <button
+              type="button"
+              onClick={() => setMode("add")}
+              className={`rounded-full px-4 py-1 font-semibold transition ${
+                mode === "add"
+                  ? "bg-white/10 text-slate-50 shadow-[0_0_10px_rgba(255,255,255,0.12)]"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              Add days
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("set")}
+              className={`rounded-full px-4 py-1 font-semibold transition ${
+                mode === "set"
+                  ? "bg-white/10 text-slate-50 shadow-[0_0_10px_rgba(255,255,255,0.12)]"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              Set end date
+            </button>
+          </div>
+
+          {mode === "add" ? (
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                Extension
+              </label>
+              <select
+                value={selected}
+                onChange={(e) => setSelected(e.target.value)}
+                className="w-full rounded-xl border border-slate-800/80 bg-[#0b1020] px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              >
+                <option value="30">+1 month (30 days)</option>
+                <option value="90">+3 months (90 days)</option>
+                <option value="180">+6 months (180 days)</option>
+                <option value="365">+12 months (365 days)</option>
+                <option value="custom">Custom…</option>
+              </select>
+              {selected === "custom" && (
+                <input
+                  type="number"
+                  min={1}
+                  value={customDays}
+                  onChange={(e) => setCustomDays(e.target.value)}
+                  placeholder="Enter number of days"
+                  className="w-full rounded-xl border border-slate-800/80 bg-[#0b1020] px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                />
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                End date
+              </label>
+              <input
+                type="date"
+                value={endDateInput}
+                min={startDateInput || undefined}
+                onChange={(e) => setEndDateInput(e.target.value)}
+                className="w-full rounded-xl border border-slate-800/80 bg-[#0b1020] px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              />
+            </div>
           )}
         </div>
+
+        {member?.endDate === "lifetime" && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-xs text-amber-100">
+            <p className="font-semibold text-amber-50">
+              Lifetime membership is currently enabled.
+            </p>
+            <p className="mt-1 text-amber-100/80">
+              Extending will set a fixed end date. Confirm to proceed.
+            </p>
+            <label className="mt-2 flex items-center gap-2 text-amber-50/80">
+              <input
+                type="checkbox"
+                checked={ackLifetime}
+                onChange={(e) => setAckLifetime(e.target.checked)}
+              />
+              I understand this will disable lifetime for this member.
+            </label>
+          </div>
+        )}
+
+        {localError && (
+          <p className="text-xs text-red-400">{localError}</p>
+        )}
 
         <div className="flex justify-end gap-3 pt-2">
           <button
@@ -193,7 +320,7 @@ export function ExtendMembershipModal({
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={!extendDays || loading}
+            disabled={loading}
             className="rounded-full border border-indigo-500/70 bg-indigo-600/80 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_12px_rgba(79,70,229,0.5)] transition hover:bg-indigo-500 disabled:opacity-50"
           >
             {loading ? "Extending..." : "Confirm"}

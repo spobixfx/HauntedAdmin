@@ -39,6 +39,8 @@ export async function PATCH(
     }
 
     const extendDaysRaw = body?.extendDays;
+    const setEndDateRaw = body?.setEndDate;
+
     const extendDays =
       typeof extendDaysRaw === "number"
         ? extendDaysRaw
@@ -46,7 +48,19 @@ export async function PATCH(
           ? Number(extendDaysRaw)
           : null;
 
-    if (!extendDays || Number.isNaN(extendDays) || extendDays <= 0) {
+    const setEndDate =
+      typeof setEndDateRaw === "string" && setEndDateRaw.trim().length > 0
+        ? setEndDateRaw.trim()
+        : null;
+
+    if (!extendDays && !setEndDate) {
+      return NextResponse.json(
+        { error: "Either extendDays or setEndDate is required" },
+        { status: 400 }
+      );
+    }
+
+    if (extendDays !== null && (Number.isNaN(extendDays) || extendDays <= 0)) {
       return NextResponse.json(
         { error: "extendDays must be a positive number" },
         { status: 400 }
@@ -76,11 +90,44 @@ export async function PATCH(
         ? new Date(existing.end_date)
         : null;
 
-    const start =
-      currentEnd && currentEnd.getTime() > today.getTime() ? currentEnd : today;
+    const startDate =
+      existing.start_date && typeof existing.start_date === "string"
+        ? new Date(existing.start_date)
+        : null;
 
-    const newEnd = new Date(start);
-    newEnd.setUTCDate(newEnd.getUTCDate() + extendDays);
+    const isLifetime = !existing.end_date;
+
+    let newEnd: Date | null = null;
+
+    if (setEndDate) {
+      const parsed = new Date(setEndDate);
+      if (isNaN(parsed.getTime())) {
+        return NextResponse.json(
+          { error: "Invalid setEndDate" },
+          { status: 400 }
+        );
+      }
+      if (startDate && parsed.getTime() < startDate.getTime()) {
+        return NextResponse.json(
+          { error: "End date cannot be before start date" },
+          { status: 400 }
+        );
+      }
+      newEnd = parsed;
+    } else if (extendDays) {
+      const base =
+        currentEnd && currentEnd.getTime() > today.getTime() ? currentEnd : today;
+      const next = new Date(base);
+      next.setUTCDate(next.getUTCDate() + extendDays);
+      newEnd = next;
+    }
+
+    if (!newEnd) {
+      return NextResponse.json(
+        { error: "Unable to determine new end date" },
+        { status: 400 }
+      );
+    }
 
     const { data: updated, error: updateError } = await supabase
       .from("members")

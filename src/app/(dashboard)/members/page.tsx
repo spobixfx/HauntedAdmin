@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Upload, X } from 'lucide-react';
 
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { getPlanBadgeClass } from '@/components/PlanBadge';
@@ -16,6 +17,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+
+type ImportOptionMode = 'add' | 'set';
 
 type Plan = {
   id: string;
@@ -326,6 +329,45 @@ export default function MembersPage() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteMode, setDeleteMode] = useState<'soft' | 'force'>('soft');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importFileName, setImportFileName] = useState<string>('');
+  const [importRows, setImportRows] = useState<
+    {
+      index: number;
+      raw: Record<string, string>;
+      errors: string[];
+      action: 'create' | 'update' | 'skip';
+      targetId?: string;
+      normalized?: {
+        discordUsername: string;
+        discordId: string | null;
+        planId?: string;
+        planName: string;
+        startDate: string;
+        endDate: string | 'lifetime';
+        discountPercent: number;
+      };
+    }[]
+  >([]);
+  const [importSummary, setImportSummary] = useState<{
+    total: number;
+    valid: number;
+    skipped: number;
+    errors: number;
+  }>({ total: 0, valid: 0, skipped: 0, errors: 0 });
+  const [importOptions, setImportOptions] = useState<{
+    createOnly: boolean;
+    upsertByDiscordId: boolean;
+  }>({ createOnly: false, upsertByDiscordId: true });
+  const [importLoading, setImportLoading] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number }>({
+    done: 0,
+    total: 0,
+  });
+  const [importError, setImportError] = useState<string | null>(null);
+  const [allMembersForImport, setAllMembersForImport] = useState<Member[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const stats = useMemo(() => {
     const total = members.length;
@@ -493,22 +535,72 @@ export default function MembersPage() {
     setIsExtendModalOpen(true);
   };
 
+  const handleOpenImportModal = async () => {
+    setIsImportModalOpen(true);
+    setImportError(null);
+    setImportRows([]);
+    setImportSummary({ total: 0, valid: 0, skipped: 0, errors: 0 });
+    setImportProgress({ done: 0, total: 0 });
+    try {
+      const [activeRes, trashRes] = await Promise.all([
+        fetch('/api/members', { cache: 'no-store' }),
+        fetch('/api/members?trashed=true', { cache: 'no-store' }),
+      ]);
+      const active = activeRes.ok ? ((await activeRes.json()) as ApiMember[]) : [];
+      const trash = trashRes.ok ? ((await trashRes.json()) as ApiMember[]) : [];
+      const mapped = [...active, ...trash].map(mapApiMember);
+      setAllMembersForImport(mapped);
+    } catch (error) {
+      console.error('[IMPORT_FETCH_MEMBERS]', error);
+    }
+  };
+
+  const handleCloseImportModal = () => {
+    if (importLoading) return;
+    setIsImportModalOpen(false);
+    setImportRows([]);
+    setImportFileName('');
+    setImportError(null);
+    setImportProgress({ done: 0, total: 0 });
+    setIsDragOver(false);
+  };
+  const clearImportSelection = () => {
+    setImportRows([]);
+    setImportFileName('');
+    setImportSummary({ total: 0, valid: 0, skipped: 0, errors: 0 });
+    setImportError(null);
+    setImportProgress({ done: 0, total: 0 });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleCloseExtendModal = () => {
     setIsExtendModalOpen(false);
     setExtendMember(null);
     setExtendLoading(false);
   };
 
-  const handleConfirmExtend = async (days: number) => {
+  const handleConfirmExtend = async (
+    payload: { mode: 'add'; days: number } | { mode: 'set'; endDate: string }
+  ) => {
     if (!extendMember) return;
     setExtendLoading(true);
     setFetchError(null);
     try {
-      const res = await fetch(`/api/members/${encodeURIComponent(extendMember.id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ extendDays: days }),
-      });
+      const bodyPayload =
+        payload.mode === 'add'
+          ? { extendDays: payload.days }
+          : { setEndDate: payload.endDate };
+
+      const res = await fetch(
+        `/api/members/${encodeURIComponent(extendMember.id)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyPayload),
+        }
+      );
 
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body?.member) {
@@ -795,6 +887,85 @@ export default function MembersPage() {
       });
   }, [members, planFilter, statusFilter, searchQuery, sortByStartDate]);
 
+  const summary = useMemo(() => {
+    let totalRevenue = 0;
+    let totalDiscount = 0;
+
+    filteredMembers.forEach((member) => {
+      const { base, effective } = getEffectivePriceForMember(member);
+      totalRevenue += effective;
+      totalDiscount += Math.max(0, base - effective);
+    });
+
+    return {
+      count: filteredMembers.length,
+      revenue: totalRevenue,
+      discount: totalDiscount,
+    };
+  }, [filteredMembers, planPriceMap]);
+
+  const exportCsv = () => {
+    const headers = [
+      'discord_username',
+      'discord_id',
+      'plan_name',
+      'plan_id',
+      'start_date',
+      'end_date',
+      'lifetime',
+      'discount_percent',
+      'discount_note',
+      'status',
+    ];
+
+    const findPlanId = (planName: string) => {
+      const found = plans.find((p) => p.name === planName);
+      return found?.id ?? '';
+    };
+
+    const rows = filteredMembers.map((m) => {
+      const lifetime = m.endDate === 'lifetime' || !m.endDate;
+      const endDate = lifetime ? '' : formatInputDate(new Date(m.endDate));
+      const startDate = m.startDate ? formatInputDate(new Date(m.startDate)) : '';
+      return [
+        m.discordUsername,
+        m.discordId ?? '',
+        m.plan,
+        findPlanId(m.plan),
+        startDate,
+        endDate,
+        lifetime ? 'true' : 'false',
+        m.discountPercent ? String(m.discountPercent) : '',
+        '',
+        m.status,
+      ];
+    });
+
+    const csvContent = [headers, ...rows]
+      .map((cols) =>
+        cols
+          .map((c) => {
+            const value = c ?? '';
+            if (/[",\n]/.test(value)) {
+              return `"${value.replace(/"/g, '""')}"`;
+            }
+            return value;
+          })
+          .join(',')
+      )
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const today = new Date();
+    const dateStr = today.toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `members_export_${dateStr}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const planFilterOptions = useMemo(() => {
     const names = new Set<string>();
     plans.forEach((plan) => names.add(plan.name));
@@ -895,6 +1066,316 @@ export default function MembersPage() {
     computeEffectivePriceCents(formBasePriceCents, discountPercentForPreview) /
     100;
 
+  const csvTemplate = useMemo(() => {
+    const headers = [
+      'discord_username',
+      'discord_id',
+      'plan_name',
+      'plan_id',
+      'start_date',
+      'end_date',
+      'lifetime',
+      'discount_percent',
+      'discount_note',
+      'status',
+    ].join(',');
+    const example = [
+      'ghostlyuser',
+      '123456789012345678',
+      'Haunted',
+      plans[0]?.id ?? '',
+      '2025-01-01',
+      '',
+      'true',
+      '0',
+      '',
+      'Active',
+    ].join(',');
+    return `${headers}\n${example}`;
+  }, [plans]);
+
+  const downloadTemplate = () => {
+    const blob = new Blob([csvTemplate], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'members_template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const parseCsvText = (text: string) => {
+    const lines = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (!lines.length) return [];
+
+    const parseLine = (line: string) => {
+      const result: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"' && line[i + 1] === '"' && inQuotes) {
+          current += '"';
+          i++;
+          continue;
+        }
+        if (ch === '"') {
+          inQuotes = !inQuotes;
+          continue;
+        }
+        if (ch === ',' && !inQuotes) {
+          result.push(current);
+          current = '';
+          continue;
+        }
+        current += ch;
+      }
+      result.push(current);
+      return result;
+    };
+
+    const headers = parseLine(lines[0]).map((h) => h.trim().toLowerCase());
+    const rows: Record<string, string>[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseLine(lines[i]);
+      const row: Record<string, string> = {};
+      headers.forEach((h, idx) => {
+        row[h] = cols[idx] ?? '';
+      });
+      const hasContent = Object.values(row).some((v) => v && v.trim().length > 0);
+      if (hasContent) rows.push(row);
+    }
+    return rows;
+  };
+
+  const normalizeDateIso = (value: string) => {
+    if (!value) return null;
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  };
+
+  const handleCsvFile = async (file: File) => {
+    setImportError(null);
+    setImportFileName(file.name);
+    const text = await file.text();
+    const rows = parseCsvText(text);
+    const planNameMap = new Map<string, Plan>();
+    plans.forEach((p) => planNameMap.set(p.name.toLowerCase(), p));
+
+    const membersByDiscordId = new Map<string, Member>();
+    allMembersForImport.forEach((m) => {
+      if (m.discordId) membersByDiscordId.set(m.discordId, m);
+    });
+
+    const parsed = rows.map((row, idx) => {
+      const errors: string[] = [];
+      const discordUsername = (row['discord_username'] || '').trim();
+      const discordId = (row['discord_id'] || '').trim() || null;
+      if (!discordUsername) errors.push('discord_username required');
+
+      const planIdRaw = (row['plan_id'] || '').trim();
+      const planNameRaw = (row['plan_name'] || '').trim();
+      let plan: Plan | undefined;
+      if (planIdRaw) {
+        plan = plans.find((p) => p.id === planIdRaw);
+      }
+      if (!plan && planNameRaw) {
+        plan = planNameMap.get(planNameRaw.toLowerCase());
+      }
+      if (!plan) errors.push('plan not found');
+
+      const startDateRaw = (row['start_date'] || '').trim();
+      const startDate = normalizeDateIso(startDateRaw);
+      if (!startDate) errors.push('start_date invalid');
+
+      const lifetimeRaw = (row['lifetime'] || '').trim().toLowerCase();
+      const isLifetime = lifetimeRaw === 'true' || lifetimeRaw === '1';
+      const endDateRaw = (row['end_date'] || '').trim();
+      const endDate = isLifetime ? 'lifetime' : normalizeDateIso(endDateRaw) || '';
+      if (!isLifetime && !endDate) {
+        errors.push('end_date required or set lifetime=true');
+      }
+      const discountPercentRaw = (row['discount_percent'] || '').trim();
+      let discountPercent = 0;
+      if (discountPercentRaw) {
+        const num = Number(discountPercentRaw);
+        if (!Number.isFinite(num) || num < 0 || num > 100) {
+          errors.push('discount_percent must be 0-100');
+        } else {
+          discountPercent = Math.round(num * 100) / 100;
+        }
+      }
+
+      const existing = discordId ? membersByDiscordId.get(discordId) : undefined;
+      let action: 'create' | 'update' | 'skip' = 'create';
+      let targetId: string | undefined;
+      if (existing) {
+        if (importOptions.createOnly) {
+          action = 'skip';
+        } else if (importOptions.upsertByDiscordId) {
+          action = 'update';
+          targetId = existing.id;
+        }
+      }
+
+      if (errors.length > 0) {
+        action = 'skip';
+      }
+
+      return {
+        index: idx + 1,
+        raw: row,
+        errors,
+        action,
+        targetId,
+        normalized:
+          errors.length === 0 && plan && startDate
+            ? {
+                discordUsername,
+                discordId,
+                planId: plan.id,
+                planName: plan.name,
+                startDate,
+                endDate,
+                discountPercent,
+              }
+            : undefined,
+      };
+    });
+
+    const summary = parsed.reduce(
+      (acc, row) => {
+        acc.total += 1;
+        if (row.errors.length > 0) acc.errors += 1;
+        else if (row.action === 'skip') acc.skipped += 1;
+        else acc.valid += 1;
+        return acc;
+      },
+      { total: 0, valid: 0, skipped: 0, errors: 0 }
+    );
+
+    setImportRows(parsed);
+    setImportSummary(summary);
+  };
+
+  const handleFileSelected = (file: File) => {
+    const isCsv =
+      file.type === 'text/csv' ||
+      file.type === 'application/vnd.ms-excel' ||
+      file.name.toLowerCase().endsWith('.csv');
+    if (!isCsv) {
+      setImportError('Please select a CSV file.');
+      return;
+    }
+    handleCsvFile(file).catch((err) => {
+      console.error(err);
+      setImportError('Failed to read CSV file.');
+    });
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleFileSelected(file);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const runImport = async () => {
+    if (!importRows.length) {
+      setImportError('Parse a CSV file first.');
+      return;
+    }
+    const actionable = importRows.filter(
+      (r) => r.action !== 'skip' && r.normalized
+    );
+    if (!actionable.length) {
+      setImportError('No valid rows to import.');
+      return;
+    }
+    setImportError(null);
+    setImportLoading(true);
+    setImportProgress({ done: 0, total: actionable.length });
+
+    const payloads = actionable.map((row) => {
+      const n = row.normalized!;
+      const priceUsd =
+        plans.find((p) => p.id === n.planId)?.priceCents
+          ? (plans.find((p) => p.id === n.planId)!.priceCents ?? 0) / 100
+          : 0;
+      return {
+        row,
+        body: {
+          id: row.action === 'update' ? row.targetId : undefined,
+          discordUsername: n.discordUsername,
+          discordId: n.discordId,
+          planName: n.planName,
+          plan: n.planName,
+          priceUsd,
+          price: priceUsd,
+          startDate: n.startDate,
+          endDate: n.endDate === 'lifetime' ? '' : n.endDate,
+          discountPercent: n.discountPercent,
+        },
+      };
+    });
+
+    const chunk = 3;
+    const results = { created: 0, updated: 0, failed: 0, skipped: 0 };
+
+    for (let i = 0; i < payloads.length; i += chunk) {
+      const slice = payloads.slice(i, i + chunk);
+      await Promise.all(
+        slice.map(async (item) => {
+          try {
+            const method =
+              item.row.action === 'update' && item.body.id ? 'PATCH' : 'POST';
+            const res = await fetch('/api/members', {
+              method,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(item.body),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.member) {
+              results.failed += 1;
+              return;
+            }
+            const mapped = mapApiMember(data.member as ApiMember);
+            setMembers((prev) => {
+              const exists = prev.find((m) => m.id === mapped.id);
+              if (exists) {
+                return prev.map((m) => (m.id === mapped.id ? mapped : m));
+              }
+              return [mapped, ...prev];
+            });
+            if (item.row.action === 'update') results.updated += 1;
+            else results.created += 1;
+          } catch (error) {
+            console.error('[IMPORT_ROW]', error);
+            results.failed += 1;
+          } finally {
+            setImportProgress((prev) => ({
+              done: prev.done + 1,
+              total: prev.total,
+            }));
+          }
+        })
+      );
+    }
+
+    setImportLoading(false);
+    setImportSummary((prev) => ({
+      ...prev,
+      valid: results.created + results.updated,
+      errors: prev.errors + results.failed,
+      skipped: prev.skipped,
+    }));
+  };
+
   return (
     <div className="space-y-8 max-w-7xl w-full mx-auto">
       <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -983,10 +1464,24 @@ export default function MembersPage() {
               </div>
               <button
                 type="button"
+                onClick={exportCsv}
+                className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-50 hover:bg-white/10 transition"
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenImportModal}
+                className="rounded-full border border-indigo-500/60 bg-indigo-500/15 px-4 py-2 text-xs font-semibold text-indigo-100 hover:bg-indigo-500/25 transition"
+              >
+                Import CSV
+              </button>
+              <button
+                type="button"
                 onClick={handleOpenModal}
                 className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-semibold text-slate-50 shadow-[0_0_25px_rgba(37,99,235,0.45)] hover:bg-[#1d4ed8] transition"
               >
-                Add Member
+              Add Member
               </button>
             </div>
           </div>
@@ -1051,7 +1546,7 @@ export default function MembersPage() {
               <label className="flex flex-col">
                 <div className="text-[11px] font-medium text-slate-400">
                   Start date
-                </div>
+            </div>
                 <div className="mt-1 inline-flex items-center rounded-full border border-white/10 bg-[#0b1020] px-3 py-1.5">
                   <select
                     value={sortByStartDate}
@@ -1153,7 +1648,8 @@ export default function MembersPage() {
                     </td>
                   </tr>
               ) : (
-                filteredMembers.map((member) => (
+                <>
+                  {filteredMembers.map((member) => (
                     <tr
                       key={member.id}
                       className="transition-colors hover:bg-white/5"
@@ -1218,8 +1714,8 @@ export default function MembersPage() {
                         {viewTab === 'trash'
                           ? formatDate(member.deletedAt ?? undefined)
                           : member.endDate === 'lifetime'
-                            ? 'Lifetime'
-                            : formatDate(member.endDate)}
+                        ? 'Lifetime'
+                        : formatDate(member.endDate)}
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
                       {member.daysLeft === Number.POSITIVE_INFINITY
@@ -1253,10 +1749,10 @@ export default function MembersPage() {
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => handleEditMember(member)}
+                          onClick={() => handleEditMember(member)}
                               className={actionButtonNeutral}
-                            >
-                              Edit
+                        >
+                          Edit
                             </button>
                             <button
                               type="button"
@@ -1269,15 +1765,40 @@ export default function MembersPage() {
                               type="button"
                               onClick={() => handleOpenDeleteModal(member)}
                               className={actionButtonDestructive}
-                            >
-                              Delete
+                        >
+                          Delete
                             </button>
-                          </div>
+                      </div>
                         )}
                       </td>
                     </tr>
-                  ))
-                )}
+                  ))}
+                  <tr className="bg-white/5 text-[13px] text-slate-100/90">
+                    <td className="px-4 py-4 font-semibold text-slate-50">
+                      Totals
+                    </td>
+                    <td className="px-4 py-4 text-slate-400">—</td>
+                    <td className="px-4 py-4 text-slate-400">—</td>
+                    <td className="px-4 py-4 text-slate-100/90 whitespace-nowrap">
+                      <span className="font-semibold">
+                        Total: {summary.count} member
+                        {summary.count === 1 ? '' : 's'} ·{' '}
+                        {currencyFormatter.format(summary.revenue)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 text-slate-300 whitespace-nowrap">
+                      {summary.discount > 0
+                        ? `Discounts: ${currencyFormatter.format(summary.discount)}`
+                        : '—'}
+                    </td>
+                    <td className="px-4 py-4 text-slate-400">—</td>
+                    <td className="px-4 py-4 text-slate-400">—</td>
+                    <td className="px-4 py-4 text-slate-400">—</td>
+                    <td className="px-4 py-4 text-slate-400">—</td>
+                    <td className="px-3 py-3 text-right whitespace-nowrap align-middle w-[260px]" />
+                  </tr>
+                </>
+              )}
               </tbody>
               </table>
             </div>
@@ -1466,6 +1987,7 @@ export default function MembersPage() {
             ? {
                 id: extendMember.id,
                 discordUsername: extendMember.discordUsername,
+                startDate: extendMember.startDate,
                 endDate: extendMember.endDate,
                 planName: extendMember.plan,
                 basePriceCents: getBasePriceCentsForMember(extendMember),
@@ -1474,6 +1996,214 @@ export default function MembersPage() {
             : null
         }
       />
+      {isImportModalOpen && (
+        <Modal
+          open={isImportModalOpen}
+          onClose={handleCloseImportModal}
+          title="Import Members from CSV"
+          description="Upload a CSV to create or update members. Filters do not affect import."
+        >
+          <div className="space-y-4 text-sm text-slate-200">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-xs text-slate-400">
+                  Supported columns: discord_username, discord_id, plan_name/plan_id, start_date (YYYY-MM-DD), end_date, lifetime, discount_percent, discount_note, status.
+                </p>
+                <p className="text-xs text-slate-400">
+                  Lifetime=true requires end_date empty. Upsert uses discord_id when enabled.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={downloadTemplate}
+                className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-slate-100 hover:bg-white/10 transition"
+              >
+                Download template CSV
+              </button>
+            </div>
+
+            <div
+              className={`rounded-2xl border border-dashed px-4 py-4 bg-[#0b1020] transition ${
+                isDragOver
+                  ? 'border-indigo-500/70 shadow-[0_0_20px_rgba(79,70,229,0.4)]'
+                  : 'border-white/15'
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragOver(true);
+              }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                const file = e.dataTransfer?.files?.[0];
+                if (file) handleFileSelected(file);
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                className="sr-only"
+                onChange={handleFileInputChange}
+              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-2 rounded-full bg-[#2563eb] px-4 py-2 text-xs font-semibold text-slate-50 shadow-[0_0_18px_rgba(37,99,235,0.45)] hover:bg-[#1d4ed8] transition"
+                  >
+                    <Upload size={14} />
+                    Choose CSV file
+                  </button>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span
+                      className={
+                        importFileName
+                          ? 'text-slate-100'
+                          : 'text-slate-500'
+                      }
+                    >
+                      {importFileName || 'No file selected'}
+                    </span>
+                    {importFileName && (
+                      <>
+                        <button
+                          type="button"
+                          className="text-indigo-200 hover:text-indigo-100 transition"
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          Change
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-rose-200 hover:text-rose-100 transition"
+                          onClick={clearImportSelection}
+                        >
+                          <X size={12} />
+                          Clear
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  Drag & drop CSV here or use the button
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-4">
+              <label className="inline-flex items-center gap-2 text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={importOptions.createOnly}
+                  onChange={(e) =>
+                    setImportOptions((prev) => ({
+                      ...prev,
+                      createOnly: e.target.checked,
+                    }))
+                  }
+                />
+                Create new members only (skip existing)
+              </label>
+              <label className="inline-flex items-center gap-2 text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={importOptions.upsertByDiscordId}
+                  onChange={(e) =>
+                    setImportOptions((prev) => ({
+                      ...prev,
+                      upsertByDiscordId: e.target.checked,
+                    }))
+                  }
+                  disabled={importOptions.createOnly}
+                />
+                Upsert by Discord ID
+              </label>
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-[#0b1020] px-3 py-3 text-xs text-slate-200">
+              <div className="flex items-center justify-between">
+                <span>Total rows: {importSummary.total}</span>
+                <span>Valid: {importSummary.valid}</span>
+                <span>Skipped: {importSummary.skipped}</span>
+                <span>Errors: {importSummary.errors}</span>
+              </div>
+              {importProgress.total > 0 && (
+                <div className="mt-2 text-[11px] text-slate-400">
+                  Importing {importProgress.done}/{importProgress.total}...
+                </div>
+              )}
+            </div>
+
+            {importRows.length > 0 && (
+              <div className="max-h-64 overflow-auto rounded-xl border border-white/10 bg-[#0b1020]">
+                <table className="min-w-full text-[11px] text-slate-200">
+                  <thead className="bg-white/5 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left">#</th>
+                      <th className="px-3 py-2 text-left">Discord</th>
+                      <th className="px-3 py-2 text-left">Plan</th>
+                      <th className="px-3 py-2 text-left">Start</th>
+                      <th className="px-3 py-2 text-left">End</th>
+                      <th className="px-3 py-2 text-left">Action</th>
+                      <th className="px-3 py-2 text-left">Errors</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    {importRows.slice(0, 10).map((row) => (
+                      <tr key={row.index}>
+                        <td className="px-3 py-2">{row.index}</td>
+                        <td className="px-3 py-2">
+                          {row.normalized?.discordUsername || row.raw['discord_username'] || '—'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.normalized?.planName || row.raw['plan_name'] || row.raw['plan_id'] || '—'}
+                        </td>
+                        <td className="px-3 py-2">{row.normalized?.startDate || row.raw['start_date'] || '—'}</td>
+                        <td className="px-3 py-2">
+                          {row.normalized?.endDate === 'lifetime'
+                            ? 'lifetime'
+                            : row.normalized?.endDate ||
+                              row.raw['end_date'] ||
+                              (row.raw['lifetime'] === 'true' ? 'lifetime' : '—')}
+                        </td>
+                        <td className="px-3 py-2 capitalize">{row.action}</td>
+                        <td className="px-3 py-2 text-red-300">
+                          {row.errors.length ? row.errors.join('; ') : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {importError && <p className="text-xs text-red-400">{importError}</p>}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCloseImportModal}
+                className="rounded-full border border-slate-700/70 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800/70 transition"
+                disabled={importLoading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={runImport}
+                disabled={importLoading || importRows.length === 0}
+                className="rounded-full border border-indigo-500/70 bg-indigo-600/80 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_12px_rgba(79,70,229,0.5)] transition hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {importLoading ? 'Importing...' : 'Run Import'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {isDeleteModalOpen && memberToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141726] p-6 shadow-2xl">
