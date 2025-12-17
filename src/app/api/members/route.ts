@@ -3,12 +3,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const trashed = searchParams.get("trashed") === "true";
+
   const supabase = createClient();
-  const { data, error } = await supabase
+  const query = supabase
     .from("members")
     .select("*")
     .order("start_date", { ascending: false });
+
+  if (trashed) {
+    query.not("deleted_at", "is", null);
+  } else {
+    query.is("deleted_at", null);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -134,6 +145,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const memberId = searchParams.get("id");
+    const force = searchParams.get("force") === "true";
 
     if (!memberId) {
       return NextResponse.json(
@@ -143,9 +155,18 @@ export async function DELETE(request: NextRequest) {
     }
 
     const supabase = createClient();
+
+    if (force) {
+      const { error } = await supabase.from("members").delete().eq("id", memberId);
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ success: true });
+    }
+
     const { error } = await supabase
       .from("members")
-      .delete()
+      .update({ deleted_at: new Date().toISOString() })
       .eq("id", memberId);
 
     if (error) {

@@ -41,6 +41,9 @@ interface MemberInput {
   startDate: string;
   endDate: string | 'lifetime';
   discountPercent: number;
+  deletedAt?: string | null;
+  deletedReason?: string | null;
+  deletedBy?: string | null;
 }
 
 interface Member extends MemberInput {
@@ -60,6 +63,9 @@ type ApiMember = {
   start_date: string | null;
   end_date: string | null;
    discount_percent: number | null;
+   deleted_at: string | null;
+   deleted_reason: string | null;
+   deleted_by: string | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -177,10 +183,22 @@ const mapApiMember = (member: ApiMember): Member => {
       startDate: member.start_date ?? '',
       endDate,
       discountPercent,
+      deletedAt: member.deleted_at,
+      deletedReason: member.deleted_reason,
+      deletedBy: member.deleted_by,
     },
     member.id
   );
 };
+
+const actionButtonBase =
+  'inline-flex h-8 items-center gap-1 rounded-full border px-3 text-[11px] font-medium transition whitespace-nowrap';
+const actionButtonNeutral =
+  `${actionButtonBase} border-white/15 bg-white/5 text-slate-100 hover:bg-white/10`;
+const actionButtonDestructive =
+  `${actionButtonBase} border-red-500/60 bg-red-500/10 text-red-200 hover:bg-red-500/20`;
+const actionButtonSuccess =
+  `${actionButtonBase} border-emerald-500/60 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20`;
 
 function formatDate(dateString?: string | null) {
   if (!dateString) return '—';
@@ -289,6 +307,8 @@ export default function MembersPage() {
   const [planFilter, setPlanFilter] = useState<'all' | string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | MemberStatus>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortByStartDate, setSortByStartDate] = useState<'asc' | 'desc'>('desc');
+  const [viewTab, setViewTab] = useState<'active' | 'trash'>('active');
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [plansError, setPlansError] = useState<string | null>(null);
@@ -305,6 +325,7 @@ export default function MembersPage() {
   const [memberToDelete, setMemberToDelete] = useState<Member | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteMode, setDeleteMode] = useState<'soft' | 'force'>('soft');
 
   const stats = useMemo(() => {
     const total = members.length;
@@ -358,7 +379,9 @@ export default function MembersPage() {
     const fetchMembers = async () => {
       try {
         setIsLoading(true);
-        const res = await fetch('/api/members', { cache: 'no-store' });
+        const endpoint =
+          viewTab === 'trash' ? '/api/members?trashed=true' : '/api/members';
+        const res = await fetch(endpoint, { cache: 'no-store' });
         if (!res.ok) {
           const message = await res.text();
           if (!isMounted) return;
@@ -389,7 +412,7 @@ export default function MembersPage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [viewTab]);
 
   useEffect(() => {
     let isMounted = true;
@@ -461,6 +484,7 @@ export default function MembersPage() {
   const handleOpenDeleteModal = (member: Member) => {
     setMemberToDelete(member);
     setIsDeleteModalOpen(true);
+    setDeleteMode(viewTab === 'trash' ? 'force' : 'soft');
     setIsDeleting(false);
   };
 
@@ -514,12 +538,14 @@ export default function MembersPage() {
     setFetchError(null);
 
     try {
-      const res = await fetch(
-        `/api/members/${encodeURIComponent(memberToDelete.id)}`,
-        {
-          method: 'DELETE',
-        }
-      );
+      const endpoint =
+        deleteMode === 'force'
+          ? `/api/members/${encodeURIComponent(memberToDelete.id)}?force=true`
+          : `/api/members/${encodeURIComponent(memberToDelete.id)}`;
+
+      const res = await fetch(endpoint, {
+        method: 'DELETE',
+      });
 
       const body = await res.json().catch(() => ({} as any));
 
@@ -541,6 +567,35 @@ export default function MembersPage() {
       setIsDeleting(false);
       setIsDeleteModalOpen(false);
       setMemberToDelete(null);
+    }
+  };
+
+  const handleRestore = async (member: Member) => {
+    setFetchError(null);
+    try {
+      const res = await fetch(
+        `/api/members/${encodeURIComponent(member.id)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ restore: true }),
+        }
+      );
+
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.member) {
+        const message =
+          body?.error || body?.message || 'Failed to restore member';
+        setFetchError(message);
+        return;
+      }
+
+      setMembers((prev) => prev.filter((m) => m.id !== member.id));
+    } catch (error) {
+      console.error('[MEMBERS_RESTORE]', error);
+      setFetchError(
+        (error as any)?.message || 'Unable to restore member. Please try again.'
+      );
     }
   };
 
@@ -704,7 +759,7 @@ export default function MembersPage() {
   };
 
   const filteredMembers = useMemo(() => {
-    return members.filter((member) => {
+    const filtered = members.filter((member) => {
       const matchesPlan =
         planFilter === 'all' ? true : member.plan === planFilter;
       const matchesStatus =
@@ -714,10 +769,31 @@ export default function MembersPage() {
         query.length === 0 ||
         member.discordUsername.toLowerCase().includes(query) ||
         (member.discordId || '').includes(query);
-
       return matchesPlan && matchesStatus && matchesSearch;
     });
-  }, [members, planFilter, statusFilter, searchQuery]);
+
+    const getStartTime = (value: string | null | undefined) => {
+      if (!value) return null;
+      const time = new Date(value).getTime();
+      return Number.isFinite(time) ? time : null;
+    };
+
+    return filtered
+      .slice()
+      .sort((a, b) => {
+        const aTime = getStartTime(a.startDate);
+        const bTime = getStartTime(b.startDate);
+
+        if (aTime === null && bTime === null) return 0;
+        if (aTime === null) return 1;
+        if (bTime === null) return -1;
+
+        if (sortByStartDate === 'desc') {
+          return bTime - aTime;
+        }
+        return aTime - bTime;
+      });
+  }, [members, planFilter, statusFilter, searchQuery, sortByStartDate]);
 
   const planFilterOptions = useMemo(() => {
     const names = new Set<string>();
@@ -880,13 +956,39 @@ export default function MembersPage() {
                 Subscription health across all haunted tiers.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={handleOpenModal}
-              className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-semibold text-slate-50 shadow-[0_0_25px_rgba(37,99,235,0.45)] hover:bg-[#1d4ed8] transition"
-            >
-              Add Member
-            </button>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex items-center rounded-full border border-white/10 bg-[#0b1020] p-1 text-xs text-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setViewTab('active')}
+                  className={`rounded-full px-3 py-1 font-semibold transition ${
+                    viewTab === 'active'
+                      ? 'bg-white/10 text-slate-50 shadow-[0_0_15px_rgba(255,255,255,0.12)]'
+                      : 'text-slate-400 hover:text-slate-100'
+                  }`}
+                >
+                  Active
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewTab('trash')}
+                  className={`rounded-full px-3 py-1 font-semibold transition ${
+                    viewTab === 'trash'
+                      ? 'bg-white/10 text-slate-50 shadow-[0_0_15px_rgba(255,255,255,0.12)]'
+                      : 'text-slate-400 hover:text-slate-100'
+                  }`}
+                >
+                  Trash
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenModal}
+                className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-semibold text-slate-50 shadow-[0_0_25px_rgba(37,99,235,0.45)] hover:bg-[#1d4ed8] transition"
+              >
+                Add Member
+              </button>
+            </div>
           </div>
 
           {fetchError && (
@@ -897,7 +999,7 @@ export default function MembersPage() {
           )}
 
           <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4">
               <label className="flex flex-col">
                 <div className="text-[11px] font-medium text-slate-400">Plan</div>
                 <div className="mt-1 inline-flex items-center rounded-full border border-white/10 bg-[#0b1020] px-3 py-1.5">
@@ -943,6 +1045,26 @@ export default function MembersPage() {
                   <option value="Expiring Soon">Expiring Soon</option>
                   <option value="Expired">Expired</option>
                 </select>
+                </div>
+              </label>
+
+              <label className="flex flex-col">
+                <div className="text-[11px] font-medium text-slate-400">
+                  Start date
+                </div>
+                <div className="mt-1 inline-flex items-center rounded-full border border-white/10 bg-[#0b1020] px-3 py-1.5">
+                  <select
+                    value={sortByStartDate}
+                    onChange={(e) =>
+                      setSortByStartDate(
+                        e.target.value === 'asc' ? 'asc' : 'desc'
+                      )
+                    }
+                    className="bg-transparent text-xs text-slate-100 outline-none pr-5"
+                  >
+                    <option value="desc">Start date: Newest</option>
+                    <option value="asc">Start date: Oldest</option>
+                  </select>
                 </div>
               </label>
             </div>
@@ -995,7 +1117,7 @@ export default function MembersPage() {
                     Start Date
                   </th>
                   <th className="w-[12%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
-                    End Date / Lifetime
+                    {viewTab === 'trash' ? 'Deleted At' : 'End Date / Lifetime'}
                   </th>
                   <th className="w-[6%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Days Left
@@ -1005,7 +1127,7 @@ export default function MembersPage() {
                   </th>
                   <th
                     scope="col"
-                    className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-400 w-[260px]"
+                    className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 w-[260px] whitespace-nowrap"
                   >
                     Actions
                   </th>
@@ -1015,7 +1137,7 @@ export default function MembersPage() {
               {isLoading ? (
                   <tr className="hover:bg-transparent">
                     <td
-                      colSpan={10}
+                    colSpan={viewTab === 'trash' ? 10 : 10}
                       className="px-4 py-8 text-center text-sm text-slate-400"
                   >
                     Loading members...
@@ -1024,7 +1146,7 @@ export default function MembersPage() {
               ) : filteredMembers.length === 0 ? (
                   <tr className="hover:bg-transparent">
                     <td
-                      colSpan={10}
+                    colSpan={viewTab === 'trash' ? 10 : 10}
                       className="px-4 py-10 text-center text-sm text-slate-400"
                   >
                     No members match your filters yet.
@@ -1093,9 +1215,11 @@ export default function MembersPage() {
                       {formatDate(member.startDate)}
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
-                      {member.endDate === 'lifetime'
-                        ? 'Lifetime'
-                        : formatDate(member.endDate)}
+                        {viewTab === 'trash'
+                          ? formatDate(member.deletedAt ?? undefined)
+                          : member.endDate === 'lifetime'
+                            ? 'Lifetime'
+                            : formatDate(member.endDate)}
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
                       {member.daysLeft === Number.POSITIVE_INFINITY
@@ -1107,30 +1231,49 @@ export default function MembersPage() {
                         {member.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap align-middle w-[260px]">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            type="button"
-                          onClick={() => handleEditMember(member)}
-                            className="h-9 rounded-full border border-slate-600 bg-slate-900 px-4 text-xs font-medium text-slate-100 hover:bg-slate-800 transition whitespace-nowrap"
-                        >
-                          Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenExtendModal(member)}
-                            className="h-9 rounded-full border border-slate-600 bg-slate-900 px-4 text-xs font-medium text-slate-100 hover:bg-slate-800 transition whitespace-nowrap"
-                          >
-                            Extend
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenDeleteModal(member)}
-                            className="h-9 rounded-full border border-red-500/70 bg-red-500/10 px-4 text-xs font-medium text-red-300 hover:bg-red-500/20 transition whitespace-nowrap"
-                        >
-                          Delete
-                          </button>
-                      </div>
+                      <td className="px-3 py-3 text-right whitespace-nowrap align-middle w-[260px]">
+                        {viewTab === 'trash' ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRestore(member)}
+                              className={actionButtonSuccess}
+                            >
+                              Restore
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteModal(member)}
+                              className={actionButtonDestructive}
+                            >
+                              Delete permanently
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleEditMember(member)}
+                              className={actionButtonNeutral}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenExtendModal(member)}
+                              className={actionButtonNeutral}
+                            >
+                              Extend
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteModal(member)}
+                              className={actionButtonDestructive}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -1335,11 +1478,12 @@ export default function MembersPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141726] p-6 shadow-2xl">
             <h2 className="text-lg font-semibold text-white mb-2">
-              Remove member
+              {deleteMode === 'force' ? 'Delete permanently' : 'Remove member'}
             </h2>
             <p className="text-sm text-white/70 mb-4">
-              Are you sure you want to remove this member from Haunted access?
-              This action cannot be undone.
+              {deleteMode === 'force'
+                ? 'This will permanently delete the member record. This action cannot be undone.'
+                : 'Are you sure you want to move this member to Trash? You can restore them later from Trash.'}
             </p>
 
             <div className="mb-4 rounded-xl border border-white/10 bg-black/30 px-3 py-2">
@@ -1368,7 +1512,13 @@ export default function MembersPage() {
                 disabled={isDeleting}
                 className="rounded-lg border border-red-500/60 bg-red-500/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
               >
-                {isDeleting ? 'Removing...' : 'Remove'}
+                {isDeleting
+                  ? deleteMode === 'force'
+                    ? 'Deleting...'
+                    : 'Removing...'
+                  : deleteMode === 'force'
+                    ? 'Delete permanently'
+                    : 'Move to Trash'}
               </button>
             </div>
           </div>

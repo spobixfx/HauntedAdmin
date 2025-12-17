@@ -10,6 +10,34 @@ export async function PATCH(
   try {
     const { id } = await context.params;
     const body = await request.json();
+    if (!id) {
+      return NextResponse.json({ error: "Missing member id" }, { status: 400 });
+    }
+
+    if (body?.restore === true) {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("members")
+        .update({
+          deleted_at: null,
+          deleted_reason: null,
+          deleted_by: null,
+        })
+        .eq("id", id)
+        .select("*")
+        .single();
+
+      if (error || !data) {
+        const raw =
+          (error as any)?.message ||
+          (error as any)?.details ||
+          "Failed to restore member";
+        return NextResponse.json({ error: raw }, { status: 500 });
+      }
+
+      return NextResponse.json({ member: data }, { status: 200 });
+    }
+
     const extendDaysRaw = body?.extendDays;
     const extendDays =
       typeof extendDaysRaw === "number"
@@ -17,10 +45,6 @@ export async function PATCH(
         : typeof extendDaysRaw === "string"
           ? Number(extendDaysRaw)
           : null;
-
-    if (!id) {
-      return NextResponse.json({ error: "Missing member id" }, { status: 400 });
-    }
 
     if (!extendDays || Number.isNaN(extendDays) || extendDays <= 0) {
       return NextResponse.json(
@@ -90,6 +114,7 @@ export async function DELETE(
   try {
     const { searchParams } = new URL(request.url);
     const idFromQuery = searchParams.get("id");
+    const force = searchParams.get("force") === "true";
     const { id: idFromParams } = await context.params;
     const id = idFromQuery ?? idFromParams;
 
@@ -102,13 +127,49 @@ export async function DELETE(
 
     const supabase = createClient();
 
-    const { error, count } = await supabase
+    if (force) {
+      const { error, count } = await supabase
+        .from("members")
+        .delete({ count: "exact" })
+        .eq("id", id);
+
+      if (error) {
+        console.error("Failed to delete member", error);
+
+        const rawMessage =
+          (error as any)?.message ||
+          (error as any)?.details ||
+          (error as any)?.hint ||
+          JSON.stringify(error);
+
+        const message =
+          typeof rawMessage === "string" && rawMessage.length > 0
+            ? rawMessage
+            : "Failed to delete member";
+
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
+
+      if (!count || count === 0) {
+        console.warn("Delete member: no rows deleted for id", id);
+        return NextResponse.json(
+          { error: "Member not found or already deleted" },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json({ success: true });
+    }
+
+    const { data, error } = await supabase
       .from("members")
-      .delete({ count: "exact" })
-      .eq("id", id);
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .select("*")
+      .single();
 
     if (error) {
-      console.error("Failed to delete member", error);
+      console.error("Failed to soft delete member", error);
 
       const rawMessage =
         (error as any)?.message ||
@@ -124,15 +185,14 @@ export async function DELETE(
       return NextResponse.json({ error: message }, { status: 500 });
     }
 
-    if (!count || count === 0) {
-      console.warn("Delete member: no rows deleted for id", id);
+    if (!data) {
       return NextResponse.json(
         { error: "Member not found or already deleted" },
         { status: 404 }
       );
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, member: data });
   } catch (err: any) {
     console.error("Unexpected error in delete member", err);
     const raw =
