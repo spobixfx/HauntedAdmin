@@ -291,11 +291,11 @@ export default function DashboardPage() {
       </section>
 
       <section className="rounded-3xl border border-white/5 bg-gradient-to-b from-[#0b1020] via-[#050b19] to-[#030712] px-5 py-5 shadow-[0_24px_60px_rgba(0,0,0,0.45)] space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-100">Recent Members</h2>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">Recent Members</h2>
           <p className="text-xs text-slate-500">
-            The latest souls drifting into Haunted.
-          </p>
+              The latest souls drifting into Haunted.
+            </p>
         </div>
 
         {fetchError && (
@@ -396,11 +396,11 @@ export default function DashboardPage() {
       </section>
 
       <section className="rounded-3xl border border-white/5 bg-gradient-to-b from-[#0b1020] via-[#050b19] to-[#030712] px-5 py-5 shadow-[0_24px_60px_rgba(0,0,0,0.45)] space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-100">Plans Overview</h2>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">Plans Overview</h2>
           <p className="text-xs text-slate-500">
-            How members are distributed across Haunted plans.
-          </p>
+              How members are distributed across Haunted plans.
+            </p>
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-white/5 bg-[#050b19]/50">

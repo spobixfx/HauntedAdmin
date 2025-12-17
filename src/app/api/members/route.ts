@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       priceUsd,
       startDate,
       endDate,
+      discountPercent,
     } = body || {};
 
     const supabase = createClient();
@@ -53,6 +54,36 @@ export async function POST(request: Request) {
           : new Date(`${endDate}T00:00:00.000Z`).toISOString()
         : null;
 
+    const parsedDiscount =
+      typeof discountPercent === "number"
+        ? discountPercent
+        : typeof discountPercent === "string"
+          ? Number(discountPercent)
+          : 0;
+
+    if (
+      parsedDiscount !== null &&
+      parsedDiscount !== undefined &&
+      !Number.isFinite(parsedDiscount)
+    ) {
+      return NextResponse.json(
+        { error: "discountPercent must be a number between 0 and 100" },
+        { status: 400 }
+      );
+    }
+
+    if (parsedDiscount < 0 || parsedDiscount > 100) {
+      return NextResponse.json(
+        { error: "discountPercent must be between 0 and 100" },
+        { status: 400 }
+      );
+    }
+
+    const normalizedDiscount =
+      parsedDiscount > 0
+        ? Math.min(100, Math.max(0, Math.round(parsedDiscount * 100) / 100))
+        : 0;
+
     const insertPayload = {
       discord_username: discordUsername || null,
       discord_id: discordId || null,
@@ -60,6 +91,7 @@ export async function POST(request: Request) {
       price_cents: priceCents,
       start_date: startDateIso,
       end_date: endDateIso,
+      discount_percent: normalizedDiscount,
     };
 
     const { data, error } = await supabase
@@ -139,6 +171,7 @@ export async function PATCH(request: Request) {
       priceUsd,
       startDate,
       endDate,
+      discountPercent,
     } = body || {};
 
     if (!id) {
@@ -158,7 +191,41 @@ export async function PATCH(request: Request) {
         ? new Date(`${endDate}T00:00:00Z`).toISOString()
         : null;
 
-    const payload = {
+    let normalizedDiscount: number | undefined = undefined;
+    const hasDiscountField =
+      discountPercent !== undefined &&
+      discountPercent !== null &&
+      discountPercent !== '';
+
+    if (hasDiscountField) {
+      const parsed =
+        typeof discountPercent === "number"
+          ? discountPercent
+          : typeof discountPercent === "string"
+            ? Number(discountPercent)
+            : null;
+
+      if (parsed === null || !Number.isFinite(parsed)) {
+        return NextResponse.json(
+          { error: "discountPercent must be a number between 0 and 100" },
+          { status: 400 }
+        );
+      }
+
+      if (parsed < 0 || parsed > 100) {
+        return NextResponse.json(
+          { error: "discountPercent must be between 0 and 100" },
+          { status: 400 }
+        );
+      }
+
+      normalizedDiscount =
+        parsed > 0
+          ? Math.min(100, Math.max(0, Math.round(parsed * 100) / 100))
+          : 0;
+    }
+
+    const payload: Record<string, any> = {
       discord_username: discordUsername ?? null,
       discord_id: discordId ?? null,
       plan: planName ?? null,
@@ -166,6 +233,10 @@ export async function PATCH(request: Request) {
       start_date,
       end_date,
     };
+
+    if (hasDiscountField) {
+      payload.discount_percent = normalizedDiscount;
+    }
 
     const supabase = createClient();
 

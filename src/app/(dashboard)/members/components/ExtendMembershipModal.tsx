@@ -3,10 +3,18 @@
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+});
+
 type MemberForExtend = {
   id: string;
   discordUsername: string;
   endDate: string | "lifetime";
+  planName?: string;
+  basePriceCents?: number;
+  discountPercent?: number;
 };
 
 type ExtendMembershipModalProps = {
@@ -68,6 +76,21 @@ export function ExtendMembershipModal({
     return next;
   }, [extendDays, startDate]);
 
+  const discountPercent =
+    member && typeof member.discountPercent === "number"
+      ? Math.min(100, Math.max(0, Math.round(member.discountPercent * 100) / 100))
+      : 0;
+
+  const basePriceUsd =
+    member && typeof member.basePriceCents === "number"
+      ? member.basePriceCents / 100
+      : 0;
+
+  const finalPriceUsd =
+    basePriceUsd > 0
+      ? Math.round(basePriceUsd * 100 * (1 - discountPercent / 100)) / 100
+      : 0;
+
   const handleConfirm = () => {
     if (!extendDays) return;
     onConfirm(extendDays);
@@ -100,6 +123,33 @@ export function ExtendMembershipModal({
               {projectedEnd
                 ? formatDisplayDate(projectedEnd.toISOString())
                 : "—"}
+            </span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800/70 bg-[#0b1020] px-3 py-3 text-sm text-slate-200">
+          <div className="flex items-center justify-between text-xs uppercase tracking-[0.14em] text-slate-400">
+            <span>Pricing</span>
+            <span className="text-[10px] font-medium text-slate-500">
+              {member?.planName || "Plan"}
+            </span>
+          </div>
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-slate-400">Base price</span>
+            <span className="font-medium text-slate-100">
+              {basePriceUsd > 0 ? currencyFormatter.format(basePriceUsd) : "—"}
+            </span>
+          </div>
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-slate-400">Discount</span>
+            <span className="font-medium text-emerald-300">
+              {discountPercent > 0 ? `-${discountPercent}%` : "0%"}
+            </span>
+          </div>
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-slate-400">Final price</span>
+            <span className="font-semibold text-slate-50">
+              {finalPriceUsd > 0 ? currencyFormatter.format(finalPriceUsd) : "—"}
             </span>
           </div>
         </div>
@@ -153,5 +203,7 @@ export function ExtendMembershipModal({
     </Modal>
   );
 }
+
+
 
 

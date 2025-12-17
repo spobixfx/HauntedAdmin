@@ -40,6 +40,7 @@ interface MemberInput {
   price: number;
   startDate: string;
   endDate: string | 'lifetime';
+  discountPercent: number;
 }
 
 interface Member extends MemberInput {
@@ -47,6 +48,7 @@ interface Member extends MemberInput {
   status: MemberStatus;
   statusVariant: BadgeVariant;
   daysLeft: number;
+  effectivePrice: number;
 }
 
 type ApiMember = {
@@ -57,12 +59,30 @@ type ApiMember = {
   price_cents: number | null;
   start_date: string | null;
   end_date: string | null;
+   discount_percent: number | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
 });
+
+const parseDiscountInput = (value: string) => {
+  if (value === '') return 0;
+  if (!/^\d+(\.\d+)?$/.test(value)) return 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(100, Math.max(0, parsed));
+};
+
+const clampDiscount = (value: number) =>
+  Math.min(100, Math.max(0, Math.round(value * 100) / 100));
+
+const computeEffectivePriceCents = (basePriceCents: number, discount: number) => {
+  const safeBase = Number.isFinite(basePriceCents) ? basePriceCents : 0;
+  const pct = clampDiscount(Number.isFinite(discount) ? discount : 0);
+  return Math.round(safeBase * (1 - pct / 100));
+};
 
 const findDefaultLifetimePlan = (planList: Plan[]) => {
   const hauntedLifetime = planList.find(
@@ -93,9 +113,16 @@ const generateId = () =>
     : `member-${Date.now()}-${Math.random()}`;
 
 function computeMember(member: MemberInput, id?: string): Member {
+  const safeDiscount = clampDiscount(member.discountPercent || 0);
+  const effectivePrice =
+    Math.round(
+      (member.price || 0) * 100 * (1 - safeDiscount / 100)
+    ) / 100;
+
   if (member.endDate === 'lifetime') {
     return {
       ...member,
+      effectivePrice,
       id: id ?? generateId(),
       status: 'Active',
       statusVariant: 'success',
@@ -122,6 +149,7 @@ function computeMember(member: MemberInput, id?: string): Member {
 
   return {
     ...member,
+    effectivePrice,
     id: id ?? generateId(),
     status,
     statusVariant,
@@ -132,6 +160,10 @@ function computeMember(member: MemberInput, id?: string): Member {
 const mapApiMember = (member: ApiMember): Member => {
   const priceUsd =
     typeof member.price_cents === 'number' ? member.price_cents / 100 : 0;
+  const discountPercent =
+    typeof member.discount_percent === 'number'
+      ? clampDiscount(member.discount_percent)
+      : 0;
 
   const endDate =
     member.end_date === null ? 'lifetime' : member.end_date ?? 'lifetime';
@@ -144,6 +176,7 @@ const mapApiMember = (member: ApiMember): Member => {
       price: priceUsd,
       startDate: member.start_date ?? '',
       endDate,
+      discountPercent,
     },
     member.id
   );
@@ -206,6 +239,7 @@ interface FormState {
   startDate: string;
   endDate: string;
   isLifetime: boolean;
+  discountPercent: number;
 }
 
 const defaultFormState = (plan?: Plan): FormState => {
@@ -221,6 +255,7 @@ const defaultFormState = (plan?: Plan): FormState => {
     startDate: todayInputValue,
     endDate: derived.endDate,
     isLifetime: derived.isLifetime,
+    discountPercent: 0,
   };
 };
 
@@ -240,6 +275,7 @@ const formStateFromMember = (member: Member, plan?: Plan): FormState => {
     startDate: startInput,
     endDate: endInput,
     isLifetime: member.endDate === 'lifetime',
+    discountPercent: member.discountPercent ?? 0,
   };
 };
 
@@ -261,6 +297,7 @@ export default function MembersPage() {
   const [isExtendModalOpen, setIsExtendModalOpen] = useState(false);
   const [extendMember, setExtendMember] = useState<Member | null>(null);
   const [extendLoading, setExtendLoading] = useState(false);
+  const [discountInput, setDiscountInput] = useState<string>('');
   const [formErrors, setFormErrors] = useState<{
     discordUsername?: string;
     plan?: string;
@@ -286,6 +323,34 @@ export default function MembersPage() {
       trialConversions,
     };
   }, [members]);
+
+  const planPriceMap = useMemo(() => {
+    const map = new Map<string, number>();
+    plans.forEach((plan) => {
+      if (typeof plan.priceCents === 'number') {
+        map.set(plan.name, plan.priceCents);
+      }
+    });
+    return map;
+  }, [plans]);
+
+  const getBasePriceCentsForMember = (member: Member) => {
+    const planPrice = planPriceMap.get(member.plan);
+    if (typeof planPrice === 'number') return planPrice;
+    return Math.round((member.price || 0) * 100);
+  };
+
+  const getEffectivePriceForMember = (member: Member) => {
+    const baseCents = getBasePriceCentsForMember(member);
+    const effectiveCents = computeEffectivePriceCents(
+      baseCents,
+      member.discountPercent
+    );
+    return {
+      base: baseCents / 100,
+      effective: effectiveCents / 100,
+    };
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -366,6 +431,7 @@ export default function MembersPage() {
     const initialPlan =
       findDefaultLifetimePlan(plans) ?? plans[0];
     setFormData(defaultFormState(initialPlan));
+    setDiscountInput('');
     setFormErrors({});
     setIsModalOpen(true);
   };
@@ -375,6 +441,7 @@ export default function MembersPage() {
     const initialPlan =
       findDefaultLifetimePlan(plans) ?? plans[0];
     setFormData(defaultFormState(initialPlan));
+    setDiscountInput('');
     setFormErrors({});
   };
 
@@ -382,6 +449,11 @@ export default function MembersPage() {
     setEditingMemberId(member.id);
     const matchingPlan = plans.find((plan) => plan.name === member.plan);
     setFormData(formStateFromMember(member, matchingPlan));
+    setDiscountInput(
+      member.discountPercent && member.discountPercent > 0
+        ? String(member.discountPercent)
+        : ''
+    );
     setFormErrors({});
     setIsModalOpen(true);
   };
@@ -513,8 +585,8 @@ export default function MembersPage() {
     let isLifetime = false;
 
     if (selectedPlan.durationDays && selectedPlan.durationDays > 0) {
-      const derived = deriveEndDate(
-        selectedPlan.durationDays,
+    const derived = deriveEndDate(
+      selectedPlan.durationDays,
         startDate
       );
       endDate = derived.endDate || '';
@@ -562,6 +634,18 @@ export default function MembersPage() {
       endDate: nextEnd,
       isLifetime: false,
     }));
+  };
+
+  const handleDiscountChange = (value: string) => {
+    if (value === '') {
+      setDiscountInput('');
+      setFormData((prev) => ({ ...prev, discountPercent: 0 }));
+      return;
+    }
+    if (!/^\d+$/.test(value)) return;
+    setDiscountInput(value);
+    const parsed = parseDiscountInput(value);
+    setFormData((prev) => ({ ...prev, discountPercent: parsed }));
   };
 
   const handleDiscordIdChange = (value: string) => {
@@ -664,6 +748,8 @@ export default function MembersPage() {
 
     const price = selectedPlan ? selectedPlan.priceCents / 100 : formData.price;
 
+    const discountPercentValue = parseDiscountInput(discountInput);
+
     const payload = {
       id: editingMemberId ?? undefined,
       discordUsername: formData.discordUsername.trim(),
@@ -674,6 +760,7 @@ export default function MembersPage() {
       price,
       startDate: formData.startDate,
       endDate: formData.isLifetime ? '' : formData.endDate,
+      discountPercent: discountPercentValue,
     };
 
     setSubmitLoading(true);
@@ -714,6 +801,9 @@ export default function MembersPage() {
         return [normalized, ...prev];
       });
 
+      setDiscountInput(
+        discountPercentValue > 0 ? String(discountPercentValue) : ''
+      );
       handleCloseModal();
     } catch (error) {
       console.error('[MEMBERS_SAVE]', error);
@@ -722,6 +812,12 @@ export default function MembersPage() {
       setSubmitLoading(false);
     }
   };
+
+  const formBasePriceCents = Math.round((formData.price || 0) * 100);
+  const discountPercentForPreview = parseDiscountInput(discountInput);
+  const formEffectivePrice =
+    computeEffectivePriceCents(formBasePriceCents, discountPercentForPreview) /
+    100;
 
   return (
     <div className="space-y-8 max-w-7xl w-full mx-auto">
@@ -775,7 +871,7 @@ export default function MembersPage() {
         </Card>
       </section>
 
-      <div className="mt-8 w-full rounded-3xl border border-slate-800/70 bg-[#090d16] px-6 py-6 shadow-[0_18px_45px_rgba(0,0,0,0.55)] md:overflow-visible overflow-x-auto">
+          <div className="mt-8 w-full rounded-3xl border border-slate-800/70 bg-[#090d16] px-6 py-6 shadow-[0_18px_45px_rgba(0,0,0,0.55)] overflow-hidden">
         <div className="px-0">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -805,48 +901,48 @@ export default function MembersPage() {
               <label className="flex flex-col">
                 <div className="text-[11px] font-medium text-slate-400">Plan</div>
                 <div className="mt-1 inline-flex items-center rounded-full border border-white/10 bg-[#0b1020] px-3 py-1.5">
-                  <select
-                    value={planFilter}
-                    onChange={(e) =>
-                      setPlanFilter(
-                        e.target.value === 'all'
-                          ? 'all'
-                          : e.target.value
-                      )
-                    }
+                <select
+                  value={planFilter}
+                  onChange={(e) =>
+                    setPlanFilter(
+                      e.target.value === 'all'
+                        ? 'all'
+                        : e.target.value
+                    )
+                  }
                     className="bg-transparent text-xs text-slate-100 outline-none pr-5"
-                  >
-                    <option value="all">All</option>
-                    {planFilterOptions.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
+                >
+                  <option value="all">All</option>
+                  {planFilterOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
                 </div>
               </label>
 
               <label className="flex flex-col">
                 <div className="text-[11px] font-medium text-slate-400">
-                  Status
+                Status
                 </div>
                 <div className="mt-1 inline-flex items-center rounded-full border border-white/10 bg-[#0b1020] px-3 py-1.5">
-                  <select
-                    value={statusFilter}
-                    onChange={(e) =>
-                      setStatusFilter(
-                        e.target.value === 'all'
-                          ? 'all'
-                          : (e.target.value as MemberStatus)
-                      )
-                    }
+                <select
+                  value={statusFilter}
+                  onChange={(e) =>
+                    setStatusFilter(
+                      e.target.value === 'all'
+                        ? 'all'
+                        : (e.target.value as MemberStatus)
+                    )
+                  }
                     className="bg-transparent text-xs text-slate-100 outline-none pr-5"
-                  >
-                    <option value="all">All</option>
-                    <option value="Active">Active</option>
-                    <option value="Expiring Soon">Expiring Soon</option>
-                    <option value="Expired">Expired</option>
-                  </select>
+                >
+                  <option value="all">All</option>
+                  <option value="Active">Active</option>
+                  <option value="Expiring Soon">Expiring Soon</option>
+                  <option value="Expired">Expired</option>
+                </select>
                 </div>
               </label>
             </div>
@@ -875,32 +971,36 @@ export default function MembersPage() {
             </div>
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020]/70 md:overflow-visible overflow-x-auto">
-            <table className="min-w-full table-auto text-sm text-slate-200">
+          <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020]/70">
+            <div className="overflow-x-auto">
+              <table className="min-w-full table-fixed text-sm text-slate-200">
               <thead className="bg-white/5">
                 <tr>
-                  <th className="w-[15%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="w-[14%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Discord Username
                   </th>
-                  <th className="w-[17%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="w-[14%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Discord ID
                   </th>
-                  <th className="w-[12%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="w-[11%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Plan
                   </th>
                   <th className="w-[9%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Price
                   </th>
+                  <th className="w-[8%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                    Discount
+                  </th>
                   <th className="w-[11%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Start Date
                   </th>
-                  <th className="w-[13%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="w-[12%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     End Date / Lifetime
                   </th>
-                  <th className="w-[7%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="w-[6%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Days Left
                   </th>
-                  <th className="w-[8%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="w-[7%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Status
                   </th>
                   <th
@@ -912,40 +1012,40 @@ export default function MembersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10">
-                {isLoading ? (
+              {isLoading ? (
                   <tr className="hover:bg-transparent">
                     <td
-                      colSpan={9}
+                      colSpan={10}
                       className="px-4 py-8 text-center text-sm text-slate-400"
-                    >
-                      Loading members...
+                  >
+                    Loading members...
                     </td>
                   </tr>
-                ) : filteredMembers.length === 0 ? (
+              ) : filteredMembers.length === 0 ? (
                   <tr className="hover:bg-transparent">
                     <td
-                      colSpan={9}
+                      colSpan={10}
                       className="px-4 py-10 text-center text-sm text-slate-400"
-                    >
-                      No members match your filters yet.
+                  >
+                    No members match your filters yet.
                     </td>
                   </tr>
-                ) : (
-                  filteredMembers.map((member) => (
+              ) : (
+                filteredMembers.map((member) => (
                     <tr
                       key={member.id}
                       className="transition-colors hover:bg-white/5"
                     >
                       <td className="px-4 py-4 text-[13px] text-slate-100/90">
-                        <span className="font-medium text-slate-50">
-                          {member.discordUsername}
+                        <span className="font-medium text-slate-50 inline-block max-w-[220px] truncate">
+                      {member.discordUsername}
                         </span>
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
                         {member.discordId ? (
                           <span
                             title={member.discordId}
-                            className="inline-flex items-center max-w-[160px] rounded-full border border-white/10 bg-[#0b1020] px-2.5 py-0.5 text-[11px] font-mono text-slate-300 overflow-hidden truncate"
+                            className="inline-flex items-center max-w-[180px] rounded-full border border-white/10 bg-[#0b1020] px-2.5 py-0.5 text-[11px] font-mono text-slate-300 overflow-hidden truncate"
                           >
                             {member.discordId}
                           </span>
@@ -963,56 +1063,81 @@ export default function MembersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
-                        {currencyFormatter.format(member.price)}
+                        {(() => {
+                          const pricing = getEffectivePriceForMember(member);
+                          const hasDiscount = member.discountPercent > 0;
+                          return (
+                            <div className="flex flex-col">
+                              <span className="font-medium text-slate-50">
+                                {currencyFormatter.format(pricing.effective)}
+                              </span>
+                              {hasDiscount && (
+                                <span className="text-[11px] text-slate-400 line-through">
+                                  {currencyFormatter.format(pricing.base)}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
+                        {member.discountPercent > 0 ? (
+                          <span className="inline-flex items-center rounded-full bg-emerald-900/40 px-2.5 py-0.5 text-[11px] font-medium text-emerald-200 border border-emerald-700/60">
+                            -{member.discountPercent}%
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
-                        {formatDate(member.startDate)}
+                      {formatDate(member.startDate)}
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
-                        {member.endDate === 'lifetime'
-                          ? 'Lifetime'
-                          : formatDate(member.endDate)}
+                      {member.endDate === 'lifetime'
+                        ? 'Lifetime'
+                        : formatDate(member.endDate)}
                       </td>
                       <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
-                        {member.daysLeft === Number.POSITIVE_INFINITY
-                          ? '∞'
-                          : `${member.daysLeft}d`}
+                      {member.daysLeft === Number.POSITIVE_INFINITY
+                        ? '∞'
+                        : `${member.daysLeft}d`}
                       </td>
                       <td className="px-4 py-4 text-xs whitespace-nowrap">
                         <span className={getStatusBadgeClass(member.statusVariant)}>
-                          {member.status}
+                        {member.status}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap align-middle w-[260px]">
-                        <div className="inline-flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             type="button"
-                            onClick={() => handleEditMember(member)}
-                            className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-800 transition"
-                          >
-                            Edit
+                          onClick={() => handleEditMember(member)}
+                            className="h-9 rounded-full border border-slate-600 bg-slate-900 px-4 text-xs font-medium text-slate-100 hover:bg-slate-800 transition whitespace-nowrap"
+                        >
+                          Edit
                           </button>
                           <button
                             type="button"
                             onClick={() => handleOpenExtendModal(member)}
-                            className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-800 transition"
+                            className="h-9 rounded-full border border-slate-600 bg-slate-900 px-4 text-xs font-medium text-slate-100 hover:bg-slate-800 transition whitespace-nowrap"
                           >
                             Extend
                           </button>
                           <button
                             type="button"
                             onClick={() => handleOpenDeleteModal(member)}
-                            className="rounded-full border border-red-500/70 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-300 hover:bg-red-500/20 transition"
-                          >
-                            Delete
+                            className="h-9 rounded-full border border-red-500/70 bg-red-500/10 px-4 text-xs font-medium text-red-300 hover:bg-red-500/20 transition whitespace-nowrap"
+                        >
+                          Delete
                           </button>
-                        </div>
+                      </div>
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -1098,6 +1223,51 @@ export default function MembersPage() {
             </label>
           </div>
 
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-2 text-sm">
+              <span className="text-[var(--text-muted)]">Discount (%)</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={discountInput}
+                onChange={(e) => handleDiscountChange(e.target.value)}
+                className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--input-background)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                placeholder="0"
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Apply a member-specific percent discount (0–100).
+              </p>
+            </label>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border-muted)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)]">
+            <div className="flex items-center justify-between">
+              <span className="text-[var(--text-muted)]">Base price</span>
+              <span className="font-semibold">
+                {formBasePriceCents > 0
+                  ? currencyFormatter.format(formBasePriceCents / 100)
+                  : '—'}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-[var(--text-muted)]">Discount</span>
+              <span className="font-semibold text-emerald-300">
+                {formData.discountPercent > 0
+                  ? `-${formData.discountPercent}%`
+                  : '0%'}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-[var(--text-muted)]">Effective price</span>
+              <span className="font-semibold text-slate-50">
+                {formBasePriceCents > 0
+                  ? currencyFormatter.format(formEffectivePrice)
+                  : '—'}
+              </span>
+            </div>
+          </div>
+
           <div className="space-y-2 text-sm">
             <span className="text-[var(--text-muted)]">End Date</span>
             <input
@@ -1154,6 +1324,9 @@ export default function MembersPage() {
                 id: extendMember.id,
                 discordUsername: extendMember.discordUsername,
                 endDate: extendMember.endDate,
+                planName: extendMember.plan,
+                basePriceCents: getBasePriceCentsForMember(extendMember),
+                discountPercent: extendMember.discountPercent,
               }
             : null
         }

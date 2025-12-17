@@ -259,23 +259,23 @@ export default function PlansPage() {
             onClick={handleOpenModal}
             className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-semibold text-slate-50 shadow-[0_0_25px_rgba(37,99,235,0.45)] hover:bg-[#1d4ed8] transition"
           >
-            New Plan
+              New Plan
           </button>
         </div>
 
-        {error && (
+          {error && (
           <p className="px-1 pt-2 text-sm text-red-400">{error}</p>
-        )}
+          )}
 
-        {isLoading && !error ? (
+          {isLoading && !error ? (
           <p className="px-1 py-4 text-sm text-slate-400">Loading plans…</p>
-        ) : null}
+          ) : null}
 
-        {!isLoading && !error && plans.length === 0 ? (
+          {!isLoading && !error && plans.length === 0 ? (
           <p className="px-1 py-4 text-sm text-slate-400">No plans defined yet.</p>
-        ) : null}
+          ) : null}
 
-        {!isLoading && !error && plans.length > 0 ? (
+          {!isLoading && !error && plans.length > 0 ? (
           <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020]/70 md:overflow-visible overflow-x-auto">
             <table className="min-w-full table-fixed text-sm text-slate-200">
               <thead className="bg-white/5">
@@ -309,7 +309,7 @@ export default function PlansPage() {
                           plan.name
                         )} inline-flex items-center rounded-full px-3 py-1 text-xs font-medium whitespace-nowrap`}
                       >
-                        {plan.name}
+                      {plan.name}
                       </span>
                     </td>
                     <td className="px-3 py-4 text-[13px] text-slate-100/90 align-middle whitespace-nowrap">
@@ -354,7 +354,7 @@ export default function PlansPage() {
               </tbody>
             </table>
           </div>
-        ) : null}
+          ) : null}
       </div>
 
       <Modal
