@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { Badge, type BadgeVariant } from '@/components/ui/Badge';
+import { Badge } from '@/components/ui/Badge';
 import {
   Table,
   TableBody,
@@ -11,17 +11,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
-
-type MemberStatus = 'Active' | 'Expiring Soon' | 'Expired';
+import {
+  classifyMemberRecord,
+  computeMemberStats,
+  type ClassifiedMember,
+} from '@/lib/memberMetrics';
 
 type ApiMember = {
   id: string;
   discord_username: string | null;
-  discord_id: string | null;
   plan: string | null;
   price_cents: number | null;
   start_date: string | null;
   end_date: string | null;
+  status?: string | null;
 };
 
 type Plan = {
@@ -30,17 +33,6 @@ type Plan = {
   priceCents: number;
   durationDays: number | null;
   active: boolean;
-};
-
-type DashboardMember = {
-  id: string;
-  discordUsername: string;
-  plan: string;
-  startDate: string | null;
-  endDate: string | 'lifetime';
-  status: MemberStatus;
-  statusVariant: BadgeVariant;
-  daysLeft: number;
 };
 
 function formatDate(dateString?: string | null) {
@@ -58,59 +50,8 @@ function formatDate(dateString?: string | null) {
   }).format(date);
 }
 
-function classifyMember(member: ApiMember): DashboardMember {
-  const endDateRaw =
-    member.end_date === null ? 'lifetime' : member.end_date ?? 'lifetime';
-  const startDate = member.start_date ?? null;
-
-  if (endDateRaw === 'lifetime') {
-    return {
-      id: member.id,
-      discordUsername: member.discord_username ?? '',
-      plan: member.plan ?? 'Unknown',
-      startDate,
-      endDate: endDateRaw,
-      status: 'Active',
-      statusVariant: 'success',
-      daysLeft: Number.POSITIVE_INFINITY,
-    };
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const endDateObj = new Date(endDateRaw);
-  const diffMs = endDateObj.getTime() - today.getTime();
-  const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-  let status: MemberStatus = 'Active';
-  let statusVariant: BadgeVariant = 'success';
-
-  if (Number.isNaN(daysLeft)) {
-    status = 'Expired';
-    statusVariant = 'error';
-  } else if (daysLeft < 0) {
-    status = 'Expired';
-    statusVariant = 'error';
-  } else if (daysLeft <= 7) {
-    status = 'Expiring Soon';
-    statusVariant = 'warning';
-  }
-
-  return {
-    id: member.id,
-    discordUsername: member.discord_username ?? '',
-    plan: member.plan ?? 'Unknown',
-    startDate,
-    endDate: endDateRaw,
-    status,
-    statusVariant,
-    daysLeft: Number.isNaN(daysLeft) ? 0 : daysLeft,
-  };
-}
-
 export default function DashboardPage() {
-  const [members, setMembers] = useState<DashboardMember[]>([]);
+  const [members, setMembers] = useState<ClassifiedMember[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(true);
   const [isLoadingPlans, setIsLoadingPlans] = useState(true);
@@ -126,7 +67,9 @@ export default function DashboardPage() {
         if (!res.ok) throw new Error('Failed to load members');
         const json = (await res.json()) as ApiMember[];
         if (!mounted) return;
-        setMembers(json.map(classifyMember));
+        setMembers(
+          json.map((m) => classifyMemberRecord(m, { warnOnInvalidDate: true }))
+        );
         setFetchError(null);
       } catch (error) {
         console.error('[DASHBOARD_MEMBERS_FETCH]', error);
@@ -167,15 +110,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const stats = useMemo(() => {
-    const total = members.length;
-    const active = members.filter((m) => m.status === 'Active').length;
-    const expiringSoon = members.filter((m) => m.status === 'Expiring Soon').length;
-    const expired = members.filter((m) => m.status === 'Expired').length;
-    const trialConversions = total ? Math.round((active / total) * 100) : 0;
-
-    return { total, active, expiringSoon, expired, trialConversions };
-  }, [members]);
+  const stats = useMemo(() => computeMemberStats(members), [members]);
 
   const getTimeFromNullable = (value: string | null): number => {
     if (!value) return 0;

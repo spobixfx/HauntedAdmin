@@ -25,8 +25,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
-
-type ImportOptionMode = 'add' | 'set';
+import {
+  classifyMemberRecord,
+  computeMemberStats,
+  statusDbToUi,
+  statusUiToDb,
+  type ClassifiedMember,
+  type MemberStatus,
+} from '@/lib/memberMetrics';
 
 type Plan = {
   id: string;
@@ -42,30 +48,17 @@ type ApiPlan = {
   duration_days: number | null;
   active: boolean | null;
 };
-type MemberStatus = 'Active' | 'Expiring Soon' | 'Expired' | 'Pending payment';
-type DbStatus = 'active' | 'pending' | 'expired' | 'deleted';
-
-interface MemberInput {
-  discordUsername: string;
-  plan: string;
+type Member = ClassifiedMember & {
   price: number;
-  startDate: string;
-  endDate: string | 'lifetime';
   discountPercent: number;
   deletedAt?: string | null;
   deletedReason?: string | null;
   deletedBy?: string | null;
   note?: string | null;
-  statusOverride?: MemberStatus;
-}
-
-interface Member extends MemberInput {
-  id: string;
-  status: MemberStatus;
-  statusVariant: BadgeVariant;
-  daysLeft: number;
+  planName?: string;
+  endDate: string | 'lifetime';
   effectivePrice: number;
-}
+};
 
 type ApiMember = {
   id: string;
@@ -107,22 +100,6 @@ const computeEffectivePriceCents = (basePriceCents: number, discount: number) =>
   return Math.round(safeBase * (1 - pct / 100));
 };
 
-const statusDbToUi = (value?: string | null): MemberStatus => {
-  const normalized = (value || '').trim().toLowerCase();
-  if (normalized === 'pending' || normalized === 'pending payment') {
-    return 'Pending payment';
-  }
-  if (normalized === 'expired') return 'Expired';
-  if (normalized === 'expiring soon') return 'Expiring Soon';
-  return 'Active';
-};
-
-const statusUiToDb = (value: MemberStatus): DbStatus => {
-  if (value === 'Pending payment') return 'pending';
-  if (value === 'Expired') return 'expired';
-  return 'active';
-};
-
 const findDefaultLifetimePlan = (planList: Plan[]) => {
   const hauntedLifetime = planList.find(
     (p) => p.durationDays === null && p.name.toLowerCase() === 'haunted'
@@ -146,75 +123,8 @@ const mapApiPlan = (api: ApiPlan): Plan => {
   };
 };
 
-const generateId = () =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `member-${Date.now()}-${Math.random()}`;
-
-function computeMember(member: MemberInput, id?: string): Member {
-  const safeDiscount = clampDiscount(member.discountPercent || 0);
-  const effectivePrice =
-    Math.round(
-      (member.price || 0) * 100 * (1 - safeDiscount / 100)
-    ) / 100;
-
-  if (member.statusOverride === 'Pending payment') {
-    return {
-      ...member,
-      effectivePrice,
-      id: id ?? generateId(),
-      status: 'Pending payment',
-      statusVariant: 'warning',
-      daysLeft: Number.NaN,
-    };
-  }
-
-  if (member.endDate === 'lifetime') {
-    return {
-      ...member,
-      effectivePrice,
-      id: id ?? generateId(),
-      status: 'Active',
-      statusVariant: 'success',
-      daysLeft: Number.POSITIVE_INFINITY,
-    };
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const endDate = new Date(member.endDate);
-  const diffMs = endDate.getTime() - today.getTime();
-  const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-  let status: MemberStatus = 'Active';
-  let statusVariant: BadgeVariant = 'success';
-
-  if (member.statusOverride) {
-    status = member.statusOverride;
-    if (status === 'Expired') statusVariant = 'error';
-    else if (status === 'Expiring Soon') statusVariant = 'warning';
-    else statusVariant = 'success';
-  } else {
-  if (daysLeft < 0) {
-    status = 'Expired';
-    statusVariant = 'error';
-  } else if (daysLeft <= 7) {
-    status = 'Expiring Soon';
-    statusVariant = 'warning';
-    }
-  }
-
-  return {
-    ...member,
-    effectivePrice,
-    id: id ?? generateId(),
-    status,
-    statusVariant,
-    daysLeft,
-  };
-}
-
 const mapApiMember = (member: ApiMember): Member => {
+  const classified = classifyMemberRecord(member, { warnOnInvalidDate: true });
   const priceUsd =
     typeof member.price_cents === 'number' ? member.price_cents / 100 : 0;
   const discountPercent =
@@ -222,27 +132,26 @@ const mapApiMember = (member: ApiMember): Member => {
       ? clampDiscount(member.discount_percent)
       : 0;
 
-  const endDate =
-    member.end_date === null ? 'lifetime' : member.end_date ?? 'lifetime';
-
-  const statusOverride = statusDbToUi(member.status);
-
-  return computeMember(
-    {
-      discordUsername: member.discord_username ?? '',
-      plan: member.plan ?? 'Unknown',
-      price: priceUsd,
-      startDate: member.start_date ?? '',
-      endDate,
-      discountPercent,
-      deletedAt: member.deleted_at,
-      deletedReason: member.deleted_reason,
-      deletedBy: member.deleted_by,
-      note: member.note,
-      statusOverride,
-    },
-    member.id
-  );
+  return {
+    id: classified.id,
+    discordUsername: classified.discordUsername,
+    plan: classified.plan,
+    planName: classified.plan,
+    price: priceUsd,
+    startDate: classified.startDate ?? '',
+    endDate: classified.endDate === 'lifetime' ? 'lifetime' : classified.endDate,
+    lifetime: classified.lifetime,
+    discountPercent,
+    deletedAt: member.deleted_at,
+    deletedReason: member.deleted_reason,
+    deletedBy: member.deleted_by,
+    note: member.note,
+    status: classified.status,
+    statusVariant: classified.statusVariant,
+    daysLeft: classified.daysLeft,
+    effectivePrice:
+      Math.round(priceUsd * 100 * (1 - (discountPercent || 0) / 100)) / 100,
+  };
 };
 
   const actionButtonBase =
@@ -343,7 +252,7 @@ const defaultFormState = (plan?: Plan): FormState => {
 };
 
 const formStateFromMember = (member: Member, plan?: Plan): FormState => {
-  const startInput = formatInputDate(new Date(member.startDate));
+  const startInput = member.startDate ? formatInputDate(new Date(member.startDate)) : '';
   const endInput =
     member.endDate === 'lifetime'
       ? ''
@@ -428,23 +337,7 @@ export default function MembersPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  const stats = useMemo(() => {
-    const total = members.length;
-
-    const active = members.filter((m) => m.status === 'Active').length;
-    const expiringSoon = members.filter((m) => m.status === 'Expiring Soon').length;
-    const expired = members.filter((m) => m.status === 'Expired').length;
-
-    const trialConversions = total > 0 ? Math.round((active / total) * 100) : 0;
-
-    return {
-      total,
-      active,
-      expiringSoon,
-      expired,
-      trialConversions,
-    };
-  }, [members]);
+  const stats = useMemo(() => computeMemberStats(members), [members]);
 
   const planPriceMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -1788,11 +1681,11 @@ const getStatusBadgeClass = (variant: BadgeVariant) => {
                         : formatDate(member.endDate)}
                       </td>
                        <td className="px-3 py-3 text-center text-[13px] text-slate-200 whitespace-nowrap">
-                      {member.status === 'Pending payment'
+                      {member.status === 'Pending payment' || member.daysLeft === null
                         ? '—'
                         : member.daysLeft === Number.POSITIVE_INFINITY
-                        ? '∞'
-                        : `${member.daysLeft}d`}
+                          ? '∞'
+                          : `${member.daysLeft}d`}
                       </td>
                        <td className="px-3 py-3 text-center text-xs whitespace-nowrap">
                         <span className={getStatusBadgeClass(member.statusVariant)}>
@@ -2122,7 +2015,7 @@ const getStatusBadgeClass = (variant: BadgeVariant) => {
             ? {
                 id: extendMember.id,
                 discordUsername: extendMember.discordUsername,
-                startDate: extendMember.startDate,
+                startDate: extendMember.startDate ?? '',
                 endDate: extendMember.endDate,
                 planName: extendMember.plan,
                 basePriceCents: getBasePriceCentsForMember(extendMember),
