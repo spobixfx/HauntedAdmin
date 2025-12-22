@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       startDate,
       endDate,
       discountPercent,
+      note,
     } = body || {};
 
     const supabase = createClient();
@@ -71,6 +72,16 @@ export async function POST(request: Request) {
         : typeof discountPercent === "string"
           ? Number(discountPercent)
           : 0;
+
+    const noteText =
+      typeof note === "string" && note.trim().length > 0 ? note.trim() : null;
+
+    if (noteText && noteText.length > 1000) {
+      return NextResponse.json(
+        { error: "note must be 1000 characters or fewer" },
+        { status: 400 }
+      );
+    }
 
     if (
       parsedDiscount !== null &&
@@ -103,6 +114,8 @@ export async function POST(request: Request) {
       start_date: startDateIso,
       end_date: endDateIso,
       discount_percent: normalizedDiscount,
+      note: noteText,
+      note_updated_at: noteText ? new Date().toISOString() : null,
     };
 
     const { data, error } = await supabase
@@ -193,6 +206,7 @@ export async function PATCH(request: Request) {
       startDate,
       endDate,
       discountPercent,
+      note,
     } = body || {};
 
     if (!id) {
@@ -211,6 +225,15 @@ export async function PATCH(request: Request) {
       endDate && typeof endDate === "string"
         ? new Date(`${endDate}T00:00:00Z`).toISOString()
         : null;
+
+    const noteText =
+      typeof note === "string" && note.trim().length > 0 ? note.trim() : null;
+    if (noteText && noteText.length > 1000) {
+      return NextResponse.json(
+        { error: "note must be 1000 characters or fewer" },
+        { status: 400 }
+      );
+    }
 
     let normalizedDiscount: number | undefined = undefined;
     const hasDiscountField =
@@ -257,6 +280,11 @@ export async function PATCH(request: Request) {
 
     if (hasDiscountField) {
       payload.discount_percent = normalizedDiscount;
+    }
+
+    if (note !== undefined) {
+      payload.note = noteText;
+      payload.note_updated_at = noteText ? new Date().toISOString() : null;
     }
 
     const supabase = createClient();

@@ -14,6 +14,18 @@ export async function PATCH(
       return NextResponse.json({ error: "Missing member id" }, { status: 400 });
     }
 
+    const noteText =
+      typeof body?.note === "string" && body.note.trim().length > 0
+        ? body.note.trim()
+        : null;
+
+    if (noteText && noteText.length > 1000) {
+      return NextResponse.json(
+        { error: "note must be 1000 characters or fewer" },
+        { status: 400 }
+      );
+    }
+
     if (body?.restore === true) {
       const supabase = createClient();
       const { data, error } = await supabase
@@ -22,6 +34,12 @@ export async function PATCH(
           deleted_at: null,
           deleted_reason: null,
           deleted_by: null,
+          ...(body?.note !== undefined
+            ? {
+                note: noteText,
+                note_updated_at: noteText ? new Date().toISOString() : null,
+              }
+            : {}),
         })
         .eq("id", id)
         .select("*")
@@ -53,7 +71,9 @@ export async function PATCH(
         ? setEndDateRaw.trim()
         : null;
 
-    if (!extendDays && !setEndDate) {
+    const hasNoteField = body?.note !== undefined;
+
+    if (!extendDays && !setEndDate && !hasNoteField) {
       return NextResponse.json(
         { error: "Either extendDays or setEndDate is required" },
         { status: 400 }
@@ -122,16 +142,27 @@ export async function PATCH(
       newEnd = next;
     }
 
-    if (!newEnd) {
+    if (!newEnd && (extendDays || setEndDate)) {
       return NextResponse.json(
         { error: "Unable to determine new end date" },
         { status: 400 }
       );
     }
 
+    const updatePayload: Record<string, any> = {};
+
+    if (newEnd) {
+      updatePayload.end_date = newEnd.toISOString();
+    }
+
+    if (hasNoteField) {
+      updatePayload.note = noteText;
+      updatePayload.note_updated_at = noteText ? new Date().toISOString() : null;
+    }
+
     const { data: updated, error: updateError } = await supabase
       .from("members")
-      .update({ end_date: newEnd.toISOString() })
+      .update(updatePayload)
       .eq("id", id)
       .select("*")
       .single();

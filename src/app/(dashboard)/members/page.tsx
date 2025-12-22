@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Upload, X } from 'lucide-react';
+import { FileText, Upload, X } from 'lucide-react';
 
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { getPlanBadgeClass } from '@/components/PlanBadge';
@@ -47,6 +47,7 @@ interface MemberInput {
   deletedAt?: string | null;
   deletedReason?: string | null;
   deletedBy?: string | null;
+  note?: string | null;
 }
 
 interface Member extends MemberInput {
@@ -65,16 +66,20 @@ type ApiMember = {
   price_cents: number | null;
   start_date: string | null;
   end_date: string | null;
-   discount_percent: number | null;
-   deleted_at: string | null;
-   deleted_reason: string | null;
-   deleted_by: string | null;
+  discount_percent: number | null;
+  deleted_at: string | null;
+  deleted_reason: string | null;
+  deleted_by: string | null;
+  note: string | null;
+  note_updated_at?: string | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
 });
+
+const NOTE_MAX = 1000;
 
 const parseDiscountInput = (value: string) => {
   if (value === '') return 0;
@@ -189,6 +194,7 @@ const mapApiMember = (member: ApiMember): Member => {
       deletedAt: member.deleted_at,
       deletedReason: member.deleted_reason,
       deletedBy: member.deleted_by,
+      note: member.note,
     },
     member.id
   );
@@ -261,6 +267,7 @@ interface FormState {
   endDate: string;
   isLifetime: boolean;
   discountPercent: number;
+  note: string;
 }
 
 const defaultFormState = (plan?: Plan): FormState => {
@@ -277,6 +284,7 @@ const defaultFormState = (plan?: Plan): FormState => {
     endDate: derived.endDate,
     isLifetime: derived.isLifetime,
     discountPercent: 0,
+    note: '',
   };
 };
 
@@ -297,6 +305,7 @@ const formStateFromMember = (member: Member, plan?: Plan): FormState => {
     endDate: endInput,
     isLifetime: member.endDate === 'lifetime',
     discountPercent: member.discountPercent ?? 0,
+    note: member.note ?? '',
   };
 };
 
@@ -997,6 +1006,12 @@ export default function MembersPage() {
 
     const discountPercentValue = parseDiscountInput(discountInput);
 
+    const noteValue = formData.note.trim();
+    if (noteValue.length > NOTE_MAX) {
+      alert(`Note must be ${NOTE_MAX} characters or fewer.`);
+      return;
+    }
+
     const payload = {
       id: editingMemberId ?? undefined,
       discordUsername: formData.discordUsername.trim(),
@@ -1008,6 +1023,7 @@ export default function MembersPage() {
       startDate: formData.startDate,
       endDate: formData.isLifetime ? '' : formData.endDate,
       discountPercent: discountPercentValue,
+      note: noteValue || null,
     };
 
     setSubmitLoading(true);
@@ -1732,6 +1748,19 @@ export default function MembersPage() {
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
+                              onClick={() => handleEditMember(member)}
+                              title={member.note ? member.note : 'Add note'}
+                              className={
+                                member.note
+                                  ? `${actionButtonNeutral} border-indigo-400/70 bg-indigo-500/10 text-indigo-100`
+                                  : `${actionButtonNeutral} text-slate-200`
+                              }
+                            >
+                              <FileText size={14} />
+                              Note
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => handleRestore(member)}
                               className={actionButtonSuccess}
                             >
@@ -1749,10 +1778,23 @@ export default function MembersPage() {
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
-                          onClick={() => handleEditMember(member)}
+                              onClick={() => handleEditMember(member)}
+                              title={member.note ? member.note : 'Add note'}
+                              className={
+                                member.note
+                                  ? `${actionButtonNeutral} border-indigo-400/70 bg-indigo-500/10 text-indigo-100`
+                                  : `${actionButtonNeutral} text-slate-200`
+                              }
+                            >
+                              <FileText size={14} />
+                              Note
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditMember(member)}
                               className={actionButtonNeutral}
-                        >
-                          Edit
+                            >
+                              Edit
                             </button>
                             <button
                               type="button"
@@ -1902,6 +1944,27 @@ export default function MembersPage() {
               <p className="text-xs text-[var(--text-muted)]">
                 Apply a member-specific percent discount (0–100).
               </p>
+            </label>
+            <label className="space-y-2 text-sm">
+              <span className="text-[var(--text-muted)]">Note</span>
+              <textarea
+                value={formData.note}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    note: e.target.value.slice(0, NOTE_MAX),
+                  }))
+                }
+                maxLength={NOTE_MAX}
+                className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--input-background)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] min-h-[96px]"
+                placeholder="Internal note (only visible to admins)…"
+              />
+              <div className="flex justify-between text-[11px] text-[var(--text-muted)]">
+                <span>Internal only, not visible to members.</span>
+                <span>
+                  {formData.note.length}/{NOTE_MAX}
+                </span>
+              </div>
             </label>
           </div>
 
