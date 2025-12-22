@@ -1,7 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Upload, X } from 'lucide-react';
+import {
+  CalendarPlus,
+  FileText,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { getPlanBadgeClass } from '@/components/PlanBadge';
@@ -34,11 +42,11 @@ type ApiPlan = {
   duration_days: number | null;
   active: boolean | null;
 };
-type MemberStatus = 'Active' | 'Expiring Soon' | 'Expired';
+type MemberStatus = 'Active' | 'Expiring Soon' | 'Expired' | 'Pending payment';
+type DbStatus = 'active' | 'pending' | 'expired' | 'deleted';
 
 interface MemberInput {
   discordUsername: string;
-  discordId: string;
   plan: string;
   price: number;
   startDate: string;
@@ -48,6 +56,7 @@ interface MemberInput {
   deletedReason?: string | null;
   deletedBy?: string | null;
   note?: string | null;
+  statusOverride?: MemberStatus;
 }
 
 interface Member extends MemberInput {
@@ -61,7 +70,6 @@ interface Member extends MemberInput {
 type ApiMember = {
   id: string;
   discord_username: string | null;
-  discord_id: string | null;
   plan: string | null;
   price_cents: number | null;
   start_date: string | null;
@@ -72,6 +80,7 @@ type ApiMember = {
   deleted_by: string | null;
   note: string | null;
   note_updated_at?: string | null;
+  status?: string | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -96,6 +105,22 @@ const computeEffectivePriceCents = (basePriceCents: number, discount: number) =>
   const safeBase = Number.isFinite(basePriceCents) ? basePriceCents : 0;
   const pct = clampDiscount(Number.isFinite(discount) ? discount : 0);
   return Math.round(safeBase * (1 - pct / 100));
+};
+
+const statusDbToUi = (value?: string | null): MemberStatus => {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'pending' || normalized === 'pending payment') {
+    return 'Pending payment';
+  }
+  if (normalized === 'expired') return 'Expired';
+  if (normalized === 'expiring soon') return 'Expiring Soon';
+  return 'Active';
+};
+
+const statusUiToDb = (value: MemberStatus): DbStatus => {
+  if (value === 'Pending payment') return 'pending';
+  if (value === 'Expired') return 'expired';
+  return 'active';
 };
 
 const findDefaultLifetimePlan = (planList: Plan[]) => {
@@ -133,6 +158,17 @@ function computeMember(member: MemberInput, id?: string): Member {
       (member.price || 0) * 100 * (1 - safeDiscount / 100)
     ) / 100;
 
+  if (member.statusOverride === 'Pending payment') {
+    return {
+      ...member,
+      effectivePrice,
+      id: id ?? generateId(),
+      status: 'Pending payment',
+      statusVariant: 'warning',
+      daysLeft: Number.NaN,
+    };
+  }
+
   if (member.endDate === 'lifetime') {
     return {
       ...member,
@@ -153,12 +189,19 @@ function computeMember(member: MemberInput, id?: string): Member {
   let status: MemberStatus = 'Active';
   let statusVariant: BadgeVariant = 'success';
 
+  if (member.statusOverride) {
+    status = member.statusOverride;
+    if (status === 'Expired') statusVariant = 'error';
+    else if (status === 'Expiring Soon') statusVariant = 'warning';
+    else statusVariant = 'success';
+  } else {
   if (daysLeft < 0) {
     status = 'Expired';
     statusVariant = 'error';
   } else if (daysLeft <= 7) {
     status = 'Expiring Soon';
     statusVariant = 'warning';
+    }
   }
 
   return {
@@ -182,10 +225,11 @@ const mapApiMember = (member: ApiMember): Member => {
   const endDate =
     member.end_date === null ? 'lifetime' : member.end_date ?? 'lifetime';
 
+  const statusOverride = statusDbToUi(member.status);
+
   return computeMember(
     {
       discordUsername: member.discord_username ?? '',
-      discordId: member.discord_id ?? '',
       plan: member.plan ?? 'Unknown',
       price: priceUsd,
       startDate: member.start_date ?? '',
@@ -195,19 +239,29 @@ const mapApiMember = (member: ApiMember): Member => {
       deletedReason: member.deleted_reason,
       deletedBy: member.deleted_by,
       note: member.note,
+      statusOverride,
     },
     member.id
   );
 };
 
-const actionButtonBase =
-  'inline-flex h-8 items-center gap-1 rounded-full border px-3 text-[11px] font-medium transition whitespace-nowrap';
-const actionButtonNeutral =
-  `${actionButtonBase} border-white/15 bg-white/5 text-slate-100 hover:bg-white/10`;
-const actionButtonDestructive =
-  `${actionButtonBase} border-red-500/60 bg-red-500/10 text-red-200 hover:bg-red-500/20`;
-const actionButtonSuccess =
-  `${actionButtonBase} border-emerald-500/60 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20`;
+  const actionButtonBase =
+    'inline-flex h-8 items-center gap-1 rounded-full border px-3 text-[11px] font-medium transition whitespace-nowrap';
+  const actionButtonNeutral =
+    `${actionButtonBase} border-white/15 bg-white/5 text-slate-100 hover:bg-white/10`;
+  const actionButtonDestructive =
+    `${actionButtonBase} border-red-500/60 bg-red-500/10 text-red-200 hover:bg-red-500/20`;
+  const actionButtonSuccess =
+    `${actionButtonBase} border-emerald-500/60 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20`;
+
+  const actionIconBase =
+    'inline-flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-semibold transition';
+  const actionIconNeutral =
+    `${actionIconBase} border-white/15 bg-white/5 text-slate-100 hover:bg-white/10`;
+  const actionIconDestructive =
+    `${actionIconBase} border-red-500/60 bg-red-500/10 text-red-200 hover:bg-red-500/20`;
+  const actionIconSuccess =
+    `${actionIconBase} border-emerald-500/60 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20`;
 
 function formatDate(dateString?: string | null) {
   if (!dateString) return '—';
@@ -259,7 +313,6 @@ const deriveEndDate = (
 
 interface FormState {
   discordUsername: string;
-  discordId: string;
   planId: string;
   planName: string;
   price: number;
@@ -268,6 +321,7 @@ interface FormState {
   isLifetime: boolean;
   discountPercent: number;
   note: string;
+  status: MemberStatus;
 }
 
 const defaultFormState = (plan?: Plan): FormState => {
@@ -276,7 +330,6 @@ const defaultFormState = (plan?: Plan): FormState => {
   const derived = deriveEndDate(plan?.durationDays ?? null, todayInputValue);
   return {
     discordUsername: '',
-    discordId: '',
     planId: plan?.id ?? '',
     planName: plan?.name ?? '',
     price: plan ? plan.priceCents / 100 : 0,
@@ -285,6 +338,7 @@ const defaultFormState = (plan?: Plan): FormState => {
     isLifetime: derived.isLifetime,
     discountPercent: 0,
     note: '',
+    status: 'Active',
   };
 };
 
@@ -297,7 +351,6 @@ const formStateFromMember = (member: Member, plan?: Plan): FormState => {
 
   return {
     discordUsername: member.discordUsername,
-    discordId: member.discordId ?? '',
     planId: plan?.id ?? '',
     planName: member.plan,
     price: member.price,
@@ -306,6 +359,7 @@ const formStateFromMember = (member: Member, plan?: Plan): FormState => {
     isLifetime: member.endDate === 'lifetime',
     discountPercent: member.discountPercent ?? 0,
     note: member.note ?? '',
+    status: member.status,
   };
 };
 
@@ -316,6 +370,8 @@ export default function MembersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState<FormState>(() => defaultFormState());
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editingOriginalStatus, setEditingOriginalStatus] =
+    useState<MemberStatus | null>(null);
   const [planFilter, setPlanFilter] = useState<'all' | string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | MemberStatus>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -325,7 +381,6 @@ export default function MembersPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [plansError, setPlansError] = useState<string | null>(null);
   const [submitLoading, setSubmitLoading] = useState(false);
-  const [discordIdError, setDiscordIdError] = useState<string | null>(null);
   const [isExtendModalOpen, setIsExtendModalOpen] = useState(false);
   const [extendMember, setExtendMember] = useState<Member | null>(null);
   const [extendLoading, setExtendLoading] = useState(false);
@@ -346,15 +401,14 @@ export default function MembersPage() {
       raw: Record<string, string>;
       errors: string[];
       action: 'create' | 'update' | 'skip';
-      targetId?: string;
       normalized?: {
         discordUsername: string;
-        discordId: string | null;
         planId?: string;
         planName: string;
         startDate: string;
         endDate: string | 'lifetime';
         discountPercent: number;
+        status?: MemberStatus;
       };
     }[]
   >([]);
@@ -364,10 +418,6 @@ export default function MembersPage() {
     skipped: number;
     errors: number;
   }>({ total: 0, valid: 0, skipped: 0, errors: 0 });
-  const [importOptions, setImportOptions] = useState<{
-    createOnly: boolean;
-    upsertByDiscordId: boolean;
-  }>({ createOnly: false, upsertByDiscordId: true });
   const [importLoading, setImportLoading] = useState(false);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number }>({
     done: 0,
@@ -502,6 +552,7 @@ export default function MembersPage() {
 
   const handleOpenModal = () => {
     setEditingMemberId(null);
+    setEditingOriginalStatus(null);
     const initialPlan =
       findDefaultLifetimePlan(plans) ?? plans[0];
     setFormData(defaultFormState(initialPlan));
@@ -512,6 +563,7 @@ export default function MembersPage() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingMemberId(null);
+    setEditingOriginalStatus(null);
     const initialPlan =
       findDefaultLifetimePlan(plans) ?? plans[0];
     setFormData(defaultFormState(initialPlan));
@@ -521,6 +573,7 @@ export default function MembersPage() {
 
   const handleEditMember = (member: Member) => {
     setEditingMemberId(member.id);
+    setEditingOriginalStatus(member.status);
     const matchingPlan = plans.find((plan) => plan.name === member.plan);
     setFormData(formStateFromMember(member, matchingPlan));
     setDiscountInput(
@@ -804,15 +857,6 @@ export default function MembersPage() {
     setFormData((prev) => ({ ...prev, discountPercent: parsed }));
   };
 
-  const handleDiscordIdChange = (value: string) => {
-    const numeric = value.replace(/\D/g, '').slice(0, 19);
-    setDiscordIdError(null);
-    setFormData((prev) => ({
-      ...prev,
-      discordId: numeric,
-    }));
-  };
-
   const handleLifetimeToggle = (nextLifetime: boolean) => {
     if (nextLifetime) {
       const lifetimePlan = findDefaultLifetimePlan(plans);
@@ -844,7 +888,7 @@ export default function MembersPage() {
     }));
   };
 
-  const getStatusBadgeClass = (variant: BadgeVariant) => {
+const getStatusBadgeClass = (variant: BadgeVariant) => {
     switch (variant) {
       case 'success':
         return 'inline-flex items-center rounded-full bg-emerald-900/40 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300 border border-emerald-700/60';
@@ -868,8 +912,7 @@ export default function MembersPage() {
       const query = searchQuery.trim().toLowerCase();
       const matchesSearch =
         query.length === 0 ||
-        member.discordUsername.toLowerCase().includes(query) ||
-        (member.discordId || '').includes(query);
+        member.discordUsername.toLowerCase().includes(query);
       return matchesPlan && matchesStatus && matchesSearch;
     });
 
@@ -916,7 +959,6 @@ export default function MembersPage() {
   const exportCsv = () => {
     const headers = [
       'discord_username',
-      'discord_id',
       'plan_name',
       'plan_id',
       'start_date',
@@ -938,7 +980,6 @@ export default function MembersPage() {
       const startDate = m.startDate ? formatInputDate(new Date(m.startDate)) : '';
       return [
         m.discordUsername,
-        m.discordId ?? '',
         m.plan,
         findPlanId(m.plan),
         startDate,
@@ -946,7 +987,7 @@ export default function MembersPage() {
         lifetime ? 'true' : 'false',
         m.discountPercent ? String(m.discountPercent) : '',
         '',
-        m.status,
+        statusUiToDb(m.status),
       ];
     });
 
@@ -988,12 +1029,6 @@ export default function MembersPage() {
     if (!formData.discordUsername.trim()) {
       errors.discordUsername = 'Discord username is required.';
     }
-    const discordIdValue = formData.discordId.trim();
-    if (discordIdValue.length > 0 && !/^\d{17,19}$/.test(discordIdValue)) {
-      setDiscordIdError('Discord ID must be 17–19 digits.');
-      return;
-    }
-    setDiscordIdError(null);
     const selectedPlan = plans.find((plan) => plan.id === formData.planId);
     const planName = selectedPlan?.name ?? formData.planName;
     if (!formData.planId && !planName) {
@@ -1012,18 +1047,41 @@ export default function MembersPage() {
       return;
     }
 
+    const wasPendingToActive =
+      editingMemberId &&
+      editingOriginalStatus === 'Pending payment' &&
+      formData.status === 'Active';
+
+    let startDateForSave = formData.startDate;
+    let endDateForSave = formData.isLifetime ? '' : formData.endDate;
+
+    if (formData.status === 'Active' && !startDateForSave) {
+      startDateForSave = formatInputDate(new Date());
+    }
+
+    if (wasPendingToActive && selectedPlan) {
+      if (selectedPlan.durationDays === null || selectedPlan.durationDays <= 0) {
+        endDateForSave = '';
+      } else {
+        endDateForSave =
+          deriveEndDate(selectedPlan.durationDays, startDateForSave).endDate;
+      }
+    }
+
+    const dbStatus = statusUiToDb(formData.status);
+
     const payload = {
       id: editingMemberId ?? undefined,
       discordUsername: formData.discordUsername.trim(),
-      discordId: formData.discordId.trim() || null,
       planName: planName ?? '',
       plan: planName ?? '',
       priceUsd: price,
       price,
-      startDate: formData.startDate,
-      endDate: formData.isLifetime ? '' : formData.endDate,
+      startDate: startDateForSave,
+      endDate: endDateForSave,
       discountPercent: discountPercentValue,
       note: noteValue || null,
+      status: dbStatus,
     };
 
     setSubmitLoading(true);
@@ -1085,7 +1143,6 @@ export default function MembersPage() {
   const csvTemplate = useMemo(() => {
     const headers = [
       'discord_username',
-      'discord_id',
       'plan_name',
       'plan_id',
       'start_date',
@@ -1097,7 +1154,6 @@ export default function MembersPage() {
     ].join(',');
     const example = [
       'ghostlyuser',
-      '123456789012345678',
       'Haunted',
       plans[0]?.id ?? '',
       '2025-01-01',
@@ -1105,7 +1161,7 @@ export default function MembersPage() {
       'true',
       '0',
       '',
-      'Active',
+        'active',
     ].join(',');
     return `${headers}\n${example}`;
   }, [plans]);
@@ -1182,15 +1238,9 @@ export default function MembersPage() {
     const planNameMap = new Map<string, Plan>();
     plans.forEach((p) => planNameMap.set(p.name.toLowerCase(), p));
 
-    const membersByDiscordId = new Map<string, Member>();
-    allMembersForImport.forEach((m) => {
-      if (m.discordId) membersByDiscordId.set(m.discordId, m);
-    });
-
     const parsed = rows.map((row, idx) => {
       const errors: string[] = [];
       const discordUsername = (row['discord_username'] || '').trim();
-      const discordId = (row['discord_id'] || '').trim() || null;
       if (!discordUsername) errors.push('discord_username required');
 
       const planIdRaw = (row['plan_id'] || '').trim();
@@ -1226,17 +1276,21 @@ export default function MembersPage() {
         }
       }
 
-      const existing = discordId ? membersByDiscordId.get(discordId) : undefined;
-      let action: 'create' | 'update' | 'skip' = 'create';
-      let targetId: string | undefined;
-      if (existing) {
-        if (importOptions.createOnly) {
-          action = 'skip';
-        } else if (importOptions.upsertByDiscordId) {
-          action = 'update';
-          targetId = existing.id;
+      const statusRaw = (row['status'] || '').trim();
+      let statusValue: MemberStatus | undefined;
+      if (statusRaw) {
+        const normalizedStatus = statusRaw.toLowerCase();
+        if (normalizedStatus === 'active') statusValue = 'Active';
+        else if (normalizedStatus === 'expiring soon') statusValue = 'Expiring Soon';
+        else if (normalizedStatus === 'expired') statusValue = 'Expired';
+        else if (normalizedStatus === 'pending' || normalizedStatus === 'pending payment')
+          statusValue = 'Pending payment';
+        else {
+          errors.push('status must be Active, Expiring Soon, Expired, or Pending payment');
         }
       }
+
+      let action: 'create' | 'update' | 'skip' = 'create';
 
       if (errors.length > 0) {
         action = 'skip';
@@ -1247,17 +1301,16 @@ export default function MembersPage() {
         raw: row,
         errors,
         action,
-        targetId,
         normalized:
           errors.length === 0 && plan && startDate
             ? {
                 discordUsername,
-                discordId,
                 planId: plan.id,
                 planName: plan.name,
                 startDate,
                 endDate,
                 discountPercent,
+                status: statusValue,
               }
             : undefined,
       };
@@ -1326,9 +1379,7 @@ export default function MembersPage() {
       return {
         row,
         body: {
-          id: row.action === 'update' ? row.targetId : undefined,
           discordUsername: n.discordUsername,
-          discordId: n.discordId,
           planName: n.planName,
           plan: n.planName,
           priceUsd,
@@ -1336,6 +1387,7 @@ export default function MembersPage() {
           startDate: n.startDate,
           endDate: n.endDate === 'lifetime' ? '' : n.endDate,
           discountPercent: n.discountPercent,
+          status: n.status,
         },
       };
     });
@@ -1348,10 +1400,8 @@ export default function MembersPage() {
       await Promise.all(
         slice.map(async (item) => {
           try {
-            const method =
-              item.row.action === 'update' && item.body.id ? 'PATCH' : 'POST';
             const res = await fetch('/api/members', {
-              method,
+              method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(item.body),
             });
@@ -1368,8 +1418,7 @@ export default function MembersPage() {
               }
               return [mapped, ...prev];
             });
-            if (item.row.action === 'update') results.updated += 1;
-            else results.created += 1;
+            results.created += 1;
           } catch (error) {
             console.error('[IMPORT_ROW]', error);
             results.failed += 1;
@@ -1393,7 +1442,7 @@ export default function MembersPage() {
   };
 
   return (
-    <div className="space-y-8 max-w-7xl w-full mx-auto">
+    <div className="space-y-8 w-full max-w-none mx-auto min-w-0 px-4 md:px-6">
       <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <Card padding="lg">
           <CardHeader title="Active Members" />
@@ -1444,7 +1493,7 @@ export default function MembersPage() {
         </Card>
       </section>
 
-          <div className="mt-8 w-full rounded-3xl border border-slate-800/70 bg-[#090d16] px-6 py-6 shadow-[0_18px_45px_rgba(0,0,0,0.55)] overflow-hidden">
+          <div className="mt-8 w-full max-w-none rounded-3xl border border-slate-800/70 bg-[#090d16] px-6 py-6 shadow-[0_18px_45px_rgba(0,0,0,0.55)] overflow-hidden">
         <div className="px-0">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -1555,6 +1604,7 @@ export default function MembersPage() {
                   <option value="Active">Active</option>
                   <option value="Expiring Soon">Expiring Soon</option>
                   <option value="Expired">Expired</option>
+                  <option value="Pending payment">Pending payment</option>
                 </select>
                 </div>
               </label>
@@ -1598,47 +1648,58 @@ export default function MembersPage() {
               <input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by Discord username or ID"
+                placeholder="Search by Discord username"
                 className="flex-1 bg-transparent text-xs text-slate-100 placeholder:text-slate-500 outline-none"
               />
             </div>
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020]/70">
-            <div className="overflow-x-auto">
-              <table className="min-w-full table-fixed text-sm text-slate-200">
+          <div className="mt-5 w-full min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020]/70">
+            <div
+              className="overflow-x-auto xl:overflow-x-visible max-w-full"
+              style={{ scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}
+            >
+              <table className="w-full table-fixed text-sm text-slate-200">
+                <colgroup>
+                  <col />
+                  <col style={{ width: '140px' }} />
+                  <col style={{ width: '110px' }} />
+                  <col style={{ width: '90px' }} />
+                  <col />
+                  <col />
+                  <col style={{ width: '96px' }} />
+                  <col style={{ width: '120px' }} />
+                  <col style={{ width: '160px' }} />
+                </colgroup>
               <thead className="bg-white/5">
                 <tr>
-                  <th className="w-[14%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Discord Username
                   </th>
-                  <th className="w-[14%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
-                    Discord ID
-                  </th>
-                  <th className="w-[11%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Plan
                   </th>
-                  <th className="w-[9%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Price
                   </th>
-                  <th className="w-[8%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Discount
                   </th>
-                  <th className="w-[11%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Start Date
                   </th>
-                  <th className="w-[12%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
-                    {viewTab === 'trash' ? 'Deleted At' : 'End Date / Lifetime'}
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                    {viewTab === 'trash' ? 'Deleted At' : 'End / Lifetime'}
                   </th>
-                  <th className="w-[6%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Days Left
                   </th>
-                  <th className="w-[7%] px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
+                  <th className="px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap">
                     Status
                   </th>
                   <th
                     scope="col"
-                    className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 w-[260px] whitespace-nowrap"
+                    className="px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400/80 whitespace-nowrap"
                   >
                     Actions
                   </th>
@@ -1647,8 +1708,8 @@ export default function MembersPage() {
               <tbody className="divide-y divide-white/10">
               {isLoading ? (
                   <tr className="hover:bg-transparent">
-                    <td
-                    colSpan={viewTab === 'trash' ? 10 : 10}
+                  <td
+                    colSpan={9}
                       className="px-4 py-8 text-center text-sm text-slate-400"
                   >
                     Loading members...
@@ -1656,8 +1717,8 @@ export default function MembersPage() {
                   </tr>
               ) : filteredMembers.length === 0 ? (
                   <tr className="hover:bg-transparent">
-                    <td
-                    colSpan={viewTab === 'trash' ? 10 : 10}
+                  <td
+                    colSpan={9}
                       className="px-4 py-10 text-center text-sm text-slate-400"
                   >
                     No members match your filters yet.
@@ -1670,33 +1731,26 @@ export default function MembersPage() {
                       key={member.id}
                       className="transition-colors hover:bg-white/5"
                     >
-                      <td className="px-4 py-4 text-[13px] text-slate-100/90">
-                        <span className="font-medium text-slate-50 inline-block max-w-[220px] truncate">
+                       <td className="px-4 py-3 text-[13px] text-slate-100/90">
+                         <span
+                           className="font-medium text-slate-50 block truncate whitespace-nowrap overflow-hidden"
+                           title={member.discordUsername}
+                         >
                       {member.discordUsername}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
-                        {member.discordId ? (
+                         </span>
+                       </td>
+                       <td className="px-4 py-3 text-[13px] text-slate-100/90 whitespace-nowrap">
+                        <div className="flex items-center justify-center">
                           <span
-                            title={member.discordId}
-                            className="inline-flex items-center max-w-[180px] rounded-full border border-white/10 bg-[#0b1020] px-2.5 py-0.5 text-[11px] font-mono text-slate-300 overflow-hidden truncate"
+                            className={`${getPlanBadgeClass(
+                              member.plan
+                            )} inline-flex items-center rounded-full px-3 py-1 text-xs font-medium whitespace-nowrap`}
                           >
-                            {member.discordId}
+                            {member.plan}
                           </span>
-                        ) : (
-                          <span className="text-slate-500">—</span>
-                        )}
+                        </div>
                       </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
-                        <span
-                          className={`${getPlanBadgeClass(
-                            member.plan
-                          )} inline-flex items-center rounded-full px-3 py-1 text-xs font-medium whitespace-nowrap`}
-                        >
-                          {member.plan}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
+                       <td className="px-4 py-3 text-center text-[13px] text-slate-100/90 whitespace-nowrap">
                         {(() => {
                           const pricing = getEffectivePriceForMember(member);
                           const hasDiscount = member.discountPercent > 0;
@@ -1714,7 +1768,7 @@ export default function MembersPage() {
                           );
                         })()}
                       </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-100/90 whitespace-nowrap">
+                       <td className="px-4 py-3 text-center text-[13px] text-slate-100/90 whitespace-nowrap">
                         {member.discountPercent > 0 ? (
                           <span className="inline-flex items-center rounded-full bg-emerald-900/40 px-2.5 py-0.5 text-[11px] font-medium text-emerald-200 border border-emerald-700/60">
                             -{member.discountPercent}%
@@ -1723,122 +1777,135 @@ export default function MembersPage() {
                           <span className="text-slate-500">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
+                       <td className="px-4 py-3 text-left text-[13px] text-slate-200 whitespace-nowrap">
                       {formatDate(member.startDate)}
                       </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
+                       <td className="px-4 py-3 text-left text-[13px] text-slate-200 whitespace-nowrap">
                         {viewTab === 'trash'
                           ? formatDate(member.deletedAt ?? undefined)
                           : member.endDate === 'lifetime'
                         ? 'Lifetime'
                         : formatDate(member.endDate)}
                       </td>
-                      <td className="px-4 py-4 text-[13px] text-slate-200 whitespace-nowrap">
-                      {member.daysLeft === Number.POSITIVE_INFINITY
+                       <td className="px-3 py-3 text-center text-[13px] text-slate-200 whitespace-nowrap">
+                      {member.status === 'Pending payment'
+                        ? '—'
+                        : member.daysLeft === Number.POSITIVE_INFINITY
                         ? '∞'
                         : `${member.daysLeft}d`}
                       </td>
-                      <td className="px-4 py-4 text-xs whitespace-nowrap">
+                       <td className="px-3 py-3 text-center text-xs whitespace-nowrap">
                         <span className={getStatusBadgeClass(member.statusVariant)}>
                         {member.status}
                         </span>
                       </td>
-                      <td className="px-3 py-3 text-right whitespace-nowrap align-middle w-[260px]">
+                      <td className="px-3 py-3 text-center whitespace-nowrap align-middle">
                         {viewTab === 'trash' ? (
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-center gap-2">
                             <button
                               type="button"
-                              onClick={() => handleEditMember(member)}
+                          onClick={() => handleEditMember(member)}
                               title={member.note ? member.note : 'Add note'}
+                              aria-label={member.note ? 'View note' : 'Add note'}
                               className={
                                 member.note
-                                  ? `${actionButtonNeutral} border-indigo-400/70 bg-indigo-500/10 text-indigo-100`
-                                  : `${actionButtonNeutral} text-slate-200`
+                                  ? `${actionIconNeutral} border-indigo-400/70 bg-indigo-500/15 text-indigo-100`
+                                  : actionIconNeutral
                               }
                             >
                               <FileText size={14} />
-                              Note
                             </button>
                             <button
                               type="button"
                               onClick={() => handleRestore(member)}
-                              className={actionButtonSuccess}
+                              title="Restore member"
+                              aria-label="Restore member"
+                              className={actionIconSuccess}
                             >
-                              Restore
+                              <RotateCcw size={14} />
                             </button>
                             <button
                               type="button"
                               onClick={() => handleOpenDeleteModal(member)}
-                              className={actionButtonDestructive}
+                              title="Delete permanently"
+                              aria-label="Delete permanently"
+                              className={actionIconDestructive}
                             >
-                              Delete permanently
+                              <Trash2 size={14} />
                             </button>
-                          </div>
+                      </div>
                         ) : (
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-center gap-2">
                             <button
                               type="button"
                               onClick={() => handleEditMember(member)}
                               title={member.note ? member.note : 'Add note'}
+                              aria-label={member.note ? 'View note' : 'Add note'}
                               className={
                                 member.note
-                                  ? `${actionButtonNeutral} border-indigo-400/70 bg-indigo-500/10 text-indigo-100`
-                                  : `${actionButtonNeutral} text-slate-200`
+                                  ? `${actionIconNeutral} border-indigo-400/70 bg-indigo-500/15 text-indigo-100`
+                                  : actionIconNeutral
                               }
                             >
                               <FileText size={14} />
-                              Note
                             </button>
                             <button
                               type="button"
                               onClick={() => handleEditMember(member)}
-                              className={actionButtonNeutral}
+                              title="Edit member"
+                              aria-label="Edit member"
+                              className={actionIconNeutral}
                             >
-                              Edit
+                              <Pencil size={14} />
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenExtendModal(member)}
-                              className={actionButtonNeutral}
-                            >
-                              Extend
-                            </button>
+                            {member.status !== 'Pending payment' && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenExtendModal(member)}
+                                title="Extend membership"
+                                aria-label="Extend membership"
+                                className={actionIconNeutral}
+                              >
+                                <CalendarPlus size={14} />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleOpenDeleteModal(member)}
-                              className={actionButtonDestructive}
-                        >
-                          Delete
+                              title="Delete member"
+                              aria-label="Delete member"
+                              className={actionIconDestructive}
+                            >
+                              <Trash2 size={14} />
                             </button>
-                      </div>
+                          </div>
                         )}
                       </td>
                     </tr>
                   ))}
-                  <tr className="bg-white/5 text-[13px] text-slate-100/90">
-                    <td className="px-4 py-4 font-semibold text-slate-50">
-                      Totals
-                    </td>
-                    <td className="px-4 py-4 text-slate-400">—</td>
-                    <td className="px-4 py-4 text-slate-400">—</td>
-                    <td className="px-4 py-4 text-slate-100/90 whitespace-nowrap">
-                      <span className="font-semibold">
-                        Total: {summary.count} member
-                        {summary.count === 1 ? '' : 's'} ·{' '}
-                        {currencyFormatter.format(summary.revenue)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 text-slate-300 whitespace-nowrap">
-                      {summary.discount > 0
-                        ? `Discounts: ${currencyFormatter.format(summary.discount)}`
-                        : '—'}
-                    </td>
-                    <td className="px-4 py-4 text-slate-400">—</td>
-                    <td className="px-4 py-4 text-slate-400">—</td>
-                    <td className="px-4 py-4 text-slate-400">—</td>
-                    <td className="px-4 py-4 text-slate-400">—</td>
-                    <td className="px-3 py-3 text-right whitespace-nowrap align-middle w-[260px]" />
-                  </tr>
+                   <tr className="bg-white/5 text-[13px] text-slate-100/90">
+                     <td className="px-3 py-3 font-semibold text-slate-50">
+                       Totals
+                     </td>
+                     <td className="px-3 py-3 text-center text-slate-400">—</td>
+                     <td className="px-3 py-3 text-center text-slate-100/90 whitespace-nowrap">
+                       <span className="font-semibold">
+                         Total: {summary.count} member
+                         {summary.count === 1 ? '' : 's'} ·{' '}
+                         {currencyFormatter.format(summary.revenue)}
+                       </span>
+                     </td>
+                     <td className="px-3 py-3 text-center text-slate-300 whitespace-nowrap">
+                       {summary.discount > 0
+                         ? `Discounts: ${currencyFormatter.format(summary.discount)}`
+                         : '—'}
+                     </td>
+                     <td className="px-3 py-3 text-left text-slate-400">—</td>
+                     <td className="px-3 py-3 text-left text-slate-400">—</td>
+                     <td className="px-3 py-3 text-center text-slate-400">—</td>
+                     <td className="px-3 py-3 text-center text-slate-400">—</td>
+                     <td className="px-3 py-3 text-center whitespace-nowrap align-middle" />
+                   </tr>
                 </>
               )}
               </tbody>
@@ -1883,17 +1950,22 @@ export default function MembersPage() {
               )}
             </label>
             <label className="space-y-2 text-sm">
-              <span className="text-[var(--text-muted)]">Discord ID</span>
-              <input
-                value={formData.discordId}
-                maxLength={19}
-                onChange={(e) => handleDiscordIdChange(e.target.value)}
+                <span className="text-[var(--text-muted)]">Status</span>
+                <select
+                value={statusUiToDb(formData.status)}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      status: statusDbToUi(e.target.value),
+                    }))
+                  }
                 className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--input-background)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-                placeholder="000000000000000000"
-              />
-              {discordIdError && (
-                <p className="text-xs text-red-400">{discordIdError}</p>
-              )}
+                  disabled={!editingMemberId}
+                >
+                  <option value="active">Active</option>
+                  <option value="pending">Pending payment</option>
+                  <option value="expired">Expired</option>
+                </select>
             </label>
           </div>
 
@@ -1932,7 +2004,7 @@ export default function MembersPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-2 text-sm">
               <span className="text-[var(--text-muted)]">Discount (%)</span>
-              <input
+            <input
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
@@ -1949,9 +2021,9 @@ export default function MembersPage() {
               <span className="text-[var(--text-muted)]">Note</span>
               <textarea
                 value={formData.note}
-                onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
                     note: e.target.value.slice(0, NOTE_MAX),
                   }))
                 }
@@ -2070,10 +2142,10 @@ export default function MembersPage() {
             <div className="flex items-center justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-xs text-slate-400">
-                  Supported columns: discord_username, discord_id, plan_name/plan_id, start_date (YYYY-MM-DD), end_date, lifetime, discount_percent, discount_note, status.
+                  Supported columns: discord_username, plan_name/plan_id, start_date (YYYY-MM-DD), end_date, lifetime, discount_percent, discount_note, status.
                 </p>
                 <p className="text-xs text-slate-400">
-                  Lifetime=true requires end_date empty. Upsert uses discord_id when enabled.
+                  Lifetime=true requires end_date empty.
                 </p>
               </div>
               <button
@@ -2155,36 +2227,6 @@ export default function MembersPage() {
                   Drag & drop CSV here or use the button
                 </div>
               </div>
-            </div>
-
-            <div className="flex flex-wrap gap-4">
-              <label className="inline-flex items-center gap-2 text-xs text-slate-200">
-                <input
-                  type="checkbox"
-                  checked={importOptions.createOnly}
-                  onChange={(e) =>
-                    setImportOptions((prev) => ({
-                      ...prev,
-                      createOnly: e.target.checked,
-                    }))
-                  }
-                />
-                Create new members only (skip existing)
-              </label>
-              <label className="inline-flex items-center gap-2 text-xs text-slate-200">
-                <input
-                  type="checkbox"
-                  checked={importOptions.upsertByDiscordId}
-                  onChange={(e) =>
-                    setImportOptions((prev) => ({
-                      ...prev,
-                      upsertByDiscordId: e.target.checked,
-                    }))
-                  }
-                  disabled={importOptions.createOnly}
-                />
-                Upsert by Discord ID
-              </label>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-[#0b1020] px-3 py-3 text-xs text-slate-200">
@@ -2284,9 +2326,7 @@ export default function MembersPage() {
                 Member
               </div>
               <div className="text-sm text-white">
-                {memberToDelete.discordUsername ||
-                  memberToDelete.discordId ||
-                  'Unknown member'}
+                {memberToDelete.discordUsername || 'Unknown member'}
               </div>
             </div>
 

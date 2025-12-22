@@ -34,7 +34,6 @@ export async function POST(request: Request) {
 
     const {
       discordUsername,
-      discordId,
       plan,
       planName,
       price,
@@ -43,7 +42,20 @@ export async function POST(request: Request) {
       endDate,
       discountPercent,
       note,
+      status,
     } = body || {};
+
+    const allowedStatuses = ["active", "pending", "expired", "deleted"] as const;
+    const statusNormalized =
+      typeof status === "string" && status.trim().length > 0
+        ? status.trim().toLowerCase()
+        : "active";
+    if (!allowedStatuses.includes(statusNormalized as any)) {
+      return NextResponse.json(
+        { error: "status must be one of active, pending, expired, deleted" },
+        { status: 400 }
+      );
+    }
 
     const supabase = createClient();
 
@@ -108,7 +120,6 @@ export async function POST(request: Request) {
 
     const insertPayload = {
       discord_username: discordUsername || null,
-      discord_id: discordId || null,
       plan: planName || plan || null,
       price_cents: priceCents,
       start_date: startDateIso,
@@ -116,6 +127,7 @@ export async function POST(request: Request) {
       discount_percent: normalizedDiscount,
       note: noteText,
       note_updated_at: noteText ? new Date().toISOString() : null,
+      status: statusNormalized,
     };
 
     const { data, error } = await supabase
@@ -200,14 +212,33 @@ export async function PATCH(request: Request) {
     const {
       id,
       discordUsername,
-      discordId,
       planName,
       priceUsd,
       startDate,
       endDate,
       discountPercent,
       note,
+      status,
     } = body || {};
+    const allowedStatuses = ["active", "pending", "expired", "deleted"] as const;
+    let statusNormalized: string | undefined;
+    if (status !== undefined) {
+      if (typeof status !== "string") {
+        return NextResponse.json(
+          { error: "status must be a string" },
+          { status: 400 }
+        );
+      }
+      const norm = status.trim().toLowerCase();
+      if (!allowedStatuses.includes(norm as any)) {
+        return NextResponse.json(
+          { error: "status must be one of active, pending, expired, deleted" },
+          { status: 400 }
+        );
+      }
+      statusNormalized = norm;
+    }
+
 
     if (!id) {
       return NextResponse.json({ error: "Missing id" }, { status: 400 });
@@ -271,7 +302,6 @@ export async function PATCH(request: Request) {
 
     const payload: Record<string, any> = {
       discord_username: discordUsername ?? null,
-      discord_id: discordId ?? null,
       plan: planName ?? null,
       price_cents,
       start_date,
@@ -287,7 +317,13 @@ export async function PATCH(request: Request) {
       payload.note_updated_at = noteText ? new Date().toISOString() : null;
     }
 
+    if (statusNormalized !== undefined) {
+      payload.status = statusNormalized;
+    }
+
     const supabase = createClient();
+
+    console.log("UPDATE MEMBER BODY", payload);
 
     const { data, error } = await supabase
       .from("members")
@@ -307,6 +343,8 @@ export async function PATCH(request: Request) {
 
       return NextResponse.json({ error: raw }, { status: 500 });
     }
+
+    console.log("UPDATED MEMBER", data);
 
     return NextResponse.json({ member: data }, { status: 200 });
   } catch (err: any) {
